@@ -1,0 +1,17 @@
+# Binaries
+dooing-tmux
+dooing-tmux-*
+
+# Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
