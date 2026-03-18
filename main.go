@@ -11,9 +11,13 @@ import (
 
 func main() {
 	project := flag.Bool("project", false, "use project-scoped todos (git root)")
+	serve := flag.Bool("serve", false, "start the LAN sharing HTTP server immediately")
 	flag.Parse()
 
 	m := ui.NewModel(*project)
+	if *serve {
+		m = m.StartServer()
+	}
 
 	// When running inside a tmux popup (TMUX env var set), skip the alternate
 	// screen so tmux provides the surrounding frame.
