@@ -23,6 +23,8 @@ const (
 	inputModeCreate                 // 'i' — new todo
 	inputModeEdit                   // 'e' — edit existing todo
 	inputModeCreateNested           // 'n' — new child todo
+	inputModeImport                 // 'I' — import from file
+	inputModeExport                 // 'E' — export to file
 )
 
 // undoEntry stores a deleted todo for possible restoration.
@@ -341,6 +343,23 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.sortTodos()
 			_ = m.st.Save(m.storePath, m.todos)
+		case inputModeImport:
+			merged, err := importTodos(m.todos, text)
+			if err != nil {
+				m.statusMsg = "Import failed: " + err.Error()
+			} else {
+				imported := len(merged) - len(m.todos)
+				m.todos = merged
+				m.sortTodos()
+				_ = m.st.Save(m.storePath, m.todos)
+				m.statusMsg = fmt.Sprintf("Imported %d todo(s) from %s", imported, text)
+			}
+		case inputModeExport:
+			if err := exportTodos(m.todos, text); err != nil {
+				m.statusMsg = "Export failed: " + err.Error()
+			} else {
+				m.statusMsg = fmt.Sprintf("Exported %d todo(s) to %s", len(m.todos), text)
+			}
 		}
 		m.inputMode = inputModeNone
 		m.editingID = ""
@@ -425,6 +444,22 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.editingID = t.ID
 		m.ti.SetValue(t.Text)
 		m.ti.CursorEnd()
+		m.ti.Focus()
+		return m, textinput.Blink
+
+	// Import from file
+	case "I":
+		m.inputMode = inputModeImport
+		m.ti.SetValue("")
+		m.ti.Placeholder = "Import file path…"
+		m.ti.Focus()
+		return m, textinput.Blink
+
+	// Export to file
+	case "E":
+		m.inputMode = inputModeExport
+		m.ti.SetValue("")
+		m.ti.Placeholder = "Export file path…"
 		m.ti.Focus()
 		return m, textinput.Blink
 
@@ -713,6 +748,10 @@ func (m Model) View() string {
 			prompt = "Edit todo:"
 		case inputModeCreateNested:
 			prompt = "New child todo:"
+		case inputModeImport:
+			prompt = "Import file path:"
+		case inputModeExport:
+			prompt = "Export file path:"
 		}
 		inputBlock := inputBorderStyle.Render(
 			lipgloss.NewStyle().Bold(true).Render(prompt) + "\n" + m.ti.View(),
@@ -831,6 +870,8 @@ func renderHelpWindow() string {
 				{"j / ↓", "Move cursor down"},
 				{"k / ↑", "Move cursor up"},
 				{"f", "Reload todos from disk"},
+				{"I", "Import todos from JSON file (merge + dedup)"},
+				{"E", "Export todos to JSON file"},
 				{"?", "Toggle this help window"},
 				{"q / ctrl+c", "Quit"},
 			},
@@ -891,6 +932,8 @@ func renderQuickKeys() string {
 		{"t", "tags"},
 		{"p", "priority"},
 		{"c", "clr filter"},
+		{"I", "import"},
+		{"E", "export"},
 		{"j/k", "navigate"},
 		{"q", "quit"},
 		{"?", "help"},
