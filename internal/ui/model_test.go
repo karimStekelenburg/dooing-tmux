@@ -47,6 +47,26 @@ func createTodo(m Model, text string) Model {
 	return sendSpecialKey(m, tea.KeyEnter)
 }
 
+// navigateTo sets the cursor to the first todo whose Text equals text.
+// It is used in tests to avoid brittle cursor-index assumptions after sorting.
+func navigateTo(m Model, text string) Model {
+	for i, t := range m.todos {
+		if t.Text == text {
+			m.cursor = i
+			return m
+		}
+	}
+	return m // no-op if not found
+}
+
+// markDone toggles a todo to done state (pending → in_progress → done).
+func markDone(m Model, text string) Model {
+	m = navigateTo(m, text)
+	m = sendKey(m, "x") // pending → in_progress
+	m = sendKey(m, "x") // in_progress → done
+	return m
+}
+
 // ---- Basic model tests ----
 
 func TestNewModel(t *testing.T) {
@@ -307,13 +327,10 @@ func TestDeleteAllCompleted(t *testing.T) {
 	m = createTodo(m, "Todo 2 done")
 	m = createTodo(m, "Todo 3 done")
 
-	// Mark todos 1 and 2 as done (index 1 and 2).
-	m.cursor = 1
-	m = sendKey(m, "x")
-	m = sendKey(m, "x")
-	m.cursor = 2
-	m = sendKey(m, "x")
-	m = sendKey(m, "x")
+	// Mark "Todo 2 done" and "Todo 3 done" as done using named navigation
+	// so that sort-induced cursor movement does not break the test.
+	m = markDone(m, "Todo 2 done")
+	m = markDone(m, "Todo 3 done")
 
 	m = sendKey(m, "D")
 
@@ -357,15 +374,13 @@ func TestUndoMultiple(t *testing.T) {
 	m = createTodo(m, "First")
 	m = createTodo(m, "Second")
 
-	// Delete both (toggle to done first).
-	m.cursor = 0
-	m = sendKey(m, "x")
-	m = sendKey(m, "x")
+	// Delete both (toggle to done first using named navigation).
+	m = markDone(m, "First")
+	m = navigateTo(m, "First")
 	m = sendKey(m, "d")
 
-	m.cursor = 0 // "Second" is now at index 0
-	m = sendKey(m, "x")
-	m = sendKey(m, "x")
+	m = markDone(m, "Second")
+	m = navigateTo(m, "Second")
 	m = sendKey(m, "d")
 
 	if len(m.todos) != 0 {
@@ -398,5 +413,72 @@ func TestViewRenders(t *testing.T) {
 	v := m.View()
 	if v == "" {
 		t.Fatal("View should not return empty string")
+	}
+}
+
+func TestHelpWindowToggle(t *testing.T) {
+	m := tempModel(t)
+
+	if m.showHelp {
+		t.Fatal("help should be hidden initially")
+	}
+
+	m = sendKey(m, "?")
+	if !m.showHelp {
+		t.Fatal("? should open help window")
+	}
+
+	// While help is open, other keys (like q) close it — not quit.
+	m = sendKey(m, "q")
+	if m.showHelp {
+		t.Fatal("q should close help window")
+	}
+
+	// Re-open and close with ?
+	m = sendKey(m, "?")
+	m = sendKey(m, "?")
+	if m.showHelp {
+		t.Fatal("second ? should close help window")
+	}
+}
+
+func TestHelpWindowBlocksInput(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "existing")
+	m = sendKey(m, "?") // open help
+
+	// Pressing i while help is open should not activate input.
+	m = sendKey(m, "i")
+	if m.inputMode != inputModeNone {
+		t.Error("input should not activate while help window is open")
+	}
+}
+
+func TestSortOnToggle(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "A")
+	m = createTodo(m, "B")
+
+	// Toggle A to done — it should move after B.
+	m = markDone(m, "A")
+
+	if m.todos[0].Text != "B" {
+		t.Errorf("expected B (pending) first after A done, got %q", m.todos[0].Text)
+	}
+	if m.todos[1].Text != "A" {
+		t.Errorf("expected A (done) second, got %q", m.todos[1].Text)
+	}
+}
+
+func TestSortOnCreate(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "First")
+	// Mark First as done so Second will appear before it.
+	m = markDone(m, "First")
+	m = createTodo(m, "Second")
+
+	// "Second" is pending so should appear before "First" (done).
+	if m.todos[0].Text != "Second" {
+		t.Errorf("expected Second (pending) first, got %q", m.todos[0].Text)
 	}
 }

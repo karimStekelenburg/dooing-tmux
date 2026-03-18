@@ -8,7 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/karimStekelenburg/dooing-tmux/internal/config"
 	"github.com/karimStekelenburg/dooing-tmux/internal/model"
+	"github.com/karimStekelenburg/dooing-tmux/internal/sorter"
 	"github.com/karimStekelenburg/dooing-tmux/internal/store"
 )
 
@@ -76,6 +78,31 @@ var (
 
 	dialogFooterStyle = lipgloss.NewStyle().
 				Faint(true)
+
+	helpBorderStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("62")).
+			Padding(1, 2).
+			Width(50)
+
+	helpTitleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("62"))
+
+	helpSectionStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("214"))
+
+	helpKeyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("86"))
+
+	helpDescStyle = lipgloss.NewStyle().
+			Faint(true)
+
+	quickKeysBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("240")).
+				Padding(0, 1)
 )
 
 // Model is the root Bubble Tea model for dooing-tmux.
@@ -89,6 +116,8 @@ type Model struct {
 	storePath string
 	st        *store.Store
 
+	cfg config.Config
+
 	inputMode inputMode
 	editingID string // set when inputMode == inputModeEdit
 	ti        textinput.Model
@@ -101,6 +130,9 @@ type Model struct {
 	undoStack []undoEntry
 
 	statusMsg string // transient flash message
+
+	// Help window state.
+	showHelp bool
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -109,6 +141,11 @@ func NewModel(projectMode bool) Model {
 
 	st := store.New()
 	todos, _ := st.Load(path)
+
+	cfg, _ := config.Load(config.DefaultConfigPath())
+
+	// Sort on load so initial display is correct.
+	sorter.Sort(todos, cfg.DoneSortByCompleted)
 
 	ti := textinput.New()
 	ti.Placeholder = "Type your todo… (#tag to categorise)"
@@ -120,6 +157,7 @@ func NewModel(projectMode bool) Model {
 		todos:       todos,
 		storePath:   path,
 		st:          st,
+		cfg:         cfg,
 		ti:          ti,
 	}
 }
@@ -135,6 +173,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if ws, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = ws.Width
 		m.height = ws.Height
+		return m, nil
+	}
+
+	// Help window intercepts input when open.
+	if m.showHelp {
+		if key, ok := msg.(tea.KeyMsg); ok {
+			if key.String() == "q" || key.String() == "?" {
+				m.showHelp = false
+			}
+		}
 		return m, nil
 	}
 
@@ -186,7 +234,8 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case inputModeCreate:
 			t := model.NewTodo(text)
 			m.todos = append(m.todos, t)
-			m.cursor = len(m.todos) - 1
+			m.cursor = len(m.todos) - 1 // point at new todo before sort
+			m.sortTodos()               // cursor follows the new todo by ID
 			_ = m.st.Save(m.storePath, m.todos)
 		case inputModeEdit:
 			for _, t := range m.todos {
@@ -196,6 +245,7 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 					break
 				}
 			}
+			m.sortTodos()
 			_ = m.st.Save(m.storePath, m.todos)
 		}
 		m.inputMode = inputModeNone
@@ -261,12 +311,17 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ti.Focus()
 		return m, textinput.Blink
 
+	// Help
+	case "?":
+		m.showHelp = true
+
 	// Toggle
 	case "x":
 		if len(m.todos) == 0 {
 			break
 		}
 		m.todos[m.cursor].Toggle()
+		m.sortTodos()
 		_ = m.st.Save(m.storePath, m.todos)
 
 	// Delete
@@ -298,6 +353,7 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			remaining = []*model.Todo{}
 		}
 		m.todos = remaining
+		m.sortTodos()
 		if m.cursor >= len(m.todos) && len(m.todos) > 0 {
 			m.cursor = len(m.todos) - 1
 		} else if len(m.todos) == 0 {
@@ -322,7 +378,8 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.todos = append(m.todos, nil)
 		copy(m.todos[idx+1:], m.todos[idx:])
 		m.todos[idx] = last.todo
-		m.cursor = idx
+		m.cursor = idx // point at restored todo before sort
+		m.sortTodos()  // cursor follows the restored todo by ID
 
 		_ = m.st.Save(m.storePath, m.todos)
 		m.statusMsg = "Todo restored"
@@ -347,6 +404,34 @@ func (m Model) deleteTodoAt(idx int) Model {
 	}
 	_ = m.st.Save(m.storePath, m.todos)
 	return m
+}
+
+// sortTodos sorts todos in-place and updates cursor to follow the previously selected todo.
+func (m *Model) sortTodos() {
+	if len(m.todos) == 0 {
+		return
+	}
+	// Remember which todo was under the cursor.
+	var selectedID string
+	if m.cursor >= 0 && m.cursor < len(m.todos) {
+		selectedID = m.todos[m.cursor].ID
+	}
+
+	sorter.Sort(m.todos, m.cfg.DoneSortByCompleted)
+
+	// Re-locate the cursor.
+	if selectedID != "" {
+		for i, t := range m.todos {
+			if t.ID == selectedID {
+				m.cursor = i
+				return
+			}
+		}
+	}
+	// Fallback: clamp cursor.
+	if m.cursor >= len(m.todos) {
+		m.cursor = len(m.todos) - 1
+	}
 }
 
 // pushUndo adds an entry to the undo stack, capping at maxUndoStack.
@@ -426,7 +511,122 @@ func (m Model) View() string {
 	sb.WriteString("\n")
 	sb.WriteString(lipgloss.NewStyle().Faint(true).Render("[?] for help"))
 
-	return borderStyle.Render(sb.String())
+	mainView := borderStyle.Render(sb.String())
+
+	// Help window overlay — rendered side-by-side (right of main).
+	if m.showHelp {
+		help := renderHelpWindow()
+		return lipgloss.JoinHorizontal(lipgloss.Top, mainView, "  ", help)
+	}
+
+	// Quick keys panel below main window (optional, config-driven).
+	if m.cfg.QuickKeys {
+		qk := renderQuickKeys()
+		return lipgloss.JoinVertical(lipgloss.Left, mainView, qk)
+	}
+
+	return mainView
+}
+
+// renderHelpWindow returns the styled help overlay string.
+func renderHelpWindow() string {
+	type binding struct {
+		key  string
+		desc string
+	}
+	type section struct {
+		title    string
+		bindings []binding
+	}
+
+	sections := []section{
+		{
+			title: "Main window",
+			bindings: []binding{
+				{"i", "Create new todo"},
+				{"e", "Edit selected todo"},
+				{"x", "Toggle todo status (pending → in progress → done)"},
+				{"d", "Delete selected todo"},
+				{"D", "Delete all completed todos"},
+				{"u", "Undo last deletion"},
+				{"j / ↓", "Move cursor down"},
+				{"k / ↑", "Move cursor up"},
+				{"?", "Toggle this help window"},
+				{"q / ctrl+c", "Quit"},
+			},
+		},
+		{
+			title: "Tags window",
+			bindings: []binding{
+				{"(coming soon)", "Tag filtering — see issue #7"},
+			},
+		},
+		{
+			title: "Calendar",
+			bindings: []binding{
+				{"(coming soon)", "Due date picker — see issue #8"},
+			},
+		},
+	}
+
+	var sb strings.Builder
+	sb.WriteString(helpTitleStyle.Render(" Keybindings "))
+
+	for _, sec := range sections {
+		sb.WriteString("\n\n")
+		sb.WriteString(helpSectionStyle.Render(sec.title))
+		sb.WriteString("\n")
+		for _, b := range sec.bindings {
+			sb.WriteString("  ")
+			sb.WriteString(helpKeyStyle.Render(fmt.Sprintf("%-20s", b.key)))
+			sb.WriteString(helpDescStyle.Render(b.desc))
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("\n")
+	sb.WriteString(lipgloss.NewStyle().Faint(true).Render("Press ? or q to close"))
+
+	return helpBorderStyle.Render(sb.String())
+}
+
+// renderQuickKeys returns a small two-column quick reference panel.
+func renderQuickKeys() string {
+	keys := [][2]string{
+		{"i", "create"},
+		{"e", "edit"},
+		{"x", "toggle"},
+		{"d", "delete"},
+		{"D", "del done"},
+		{"u", "undo"},
+		{"j/k", "navigate"},
+		{"q", "quit"},
+		{"?", "help"},
+		{"ctrl+c", "force quit"},
+	}
+
+	half := (len(keys) + 1) / 2
+	var left, right strings.Builder
+	for idx, k := range keys {
+		entry := fmt.Sprintf(" %s %s ",
+			helpKeyStyle.Render(fmt.Sprintf("%-7s", k[0])),
+			helpDescStyle.Render(k[1]),
+		)
+		if idx < half {
+			left.WriteString(entry)
+			left.WriteString("\n")
+		} else {
+			right.WriteString(entry)
+			right.WriteString("\n")
+		}
+	}
+
+	cols := lipgloss.JoinHorizontal(lipgloss.Top,
+		left.String(),
+		"  ",
+		right.String(),
+	)
+	return quickKeysBorderStyle.Render(cols)
 }
 
 // renderTodo returns a styled single-line representation of t.
