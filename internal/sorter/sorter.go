@@ -11,7 +11,9 @@ package sorter
 import (
 	"sort"
 
+	"github.com/karimStekelenburg/dooing-tmux/internal/config"
 	"github.com/karimStekelenburg/dooing-tmux/internal/model"
+	"github.com/karimStekelenburg/dooing-tmux/internal/priority"
 )
 
 // Sort sorts todos in-place using the multi-key comparator.
@@ -20,13 +22,18 @@ import (
 // cfg parameters:
 //   - doneSortByCompleted: when true, among done todos sort by most-recently completed first.
 func Sort(todos []*model.Todo, doneSortByCompleted bool) {
+	SortWithConfig(todos, doneSortByCompleted, config.Defaults())
+}
+
+// SortWithConfig sorts todos using priority scoring from the provided config.
+func SortWithConfig(todos []*model.Todo, doneSortByCompleted bool, cfg config.Config) {
 	sort.SliceStable(todos, func(i, j int) bool {
-		return less(todos[i], todos[j], doneSortByCompleted)
+		return less(todos[i], todos[j], doneSortByCompleted, cfg)
 	})
 }
 
 // less is the multi-key comparator used by Sort.
-func less(a, b *model.Todo, doneSortByCompleted bool) bool {
+func less(a, b *model.Todo, doneSortByCompleted bool, cfg config.Config) bool {
 	aDone := a.Done
 	bDone := b.Done
 
@@ -44,9 +51,9 @@ func less(a, b *model.Todo, doneSortByCompleted bool) bool {
 		}
 	}
 
-	// 3. Priority score: higher first (stub returns 0 for now).
-	aScore := priorityScore(a)
-	bScore := priorityScore(b)
+	// 3. Priority score: higher first.
+	aScore := priority.GetScore(a, cfg)
+	bScore := priority.GetScore(b, cfg)
 	if aScore != bScore {
 		return aScore > bScore
 	}
@@ -65,12 +72,6 @@ func less(a, b *model.Todo, doneSortByCompleted bool) bool {
 
 	// 5. Creation time: earlier first (preserves insertion order for new todos).
 	return a.CreatedAt < b.CreatedAt
-}
-
-// priorityScore returns a numeric score for a todo's priorities.
-// This is a stub that returns 0; full scoring will be implemented in issue #8.
-func priorityScore(_ *model.Todo) int {
-	return 0
 }
 
 // completedTime returns CompletedAt as an int64 (0 if nil).

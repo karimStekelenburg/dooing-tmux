@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/karimStekelenburg/dooing-tmux/internal/config"
 	"github.com/karimStekelenburg/dooing-tmux/internal/model"
 	"github.com/karimStekelenburg/dooing-tmux/internal/sorter"
 )
@@ -121,5 +122,47 @@ func TestInProgressTreatedAsUndone(t *testing.T) {
 
 	if todos[0].ID != "ip" {
 		t.Errorf("expected in-progress before done, got %q", todos[0].ID)
+	}
+}
+
+// ---- Priority scoring in sort ----
+
+func TestHigherPriorityScoreFirst(t *testing.T) {
+	cfg := config.Defaults()
+	// important(4) + urgent(2) = 6; vs important(4) = 4
+	highPri := &model.Todo{ID: "high", Priorities: []string{"important", "urgent"}, CreatedAt: 1}
+	lowPri := &model.Todo{ID: "low", Priorities: []string{"important"}, CreatedAt: 2}
+
+	todos := []*model.Todo{lowPri, highPri}
+	sorter.SortWithConfig(todos, false, cfg)
+
+	if todos[0].ID != "high" {
+		t.Errorf("expected higher priority first, got %q", todos[0].ID)
+	}
+}
+
+func TestNoPriorityLastAmongPending(t *testing.T) {
+	cfg := config.Defaults()
+	withPri := &model.Todo{ID: "withpri", Priorities: []string{"urgent"}, CreatedAt: 1}
+	noPri := &model.Todo{ID: "nopri", CreatedAt: 2}
+
+	todos := []*model.Todo{noPri, withPri}
+	sorter.SortWithConfig(todos, false, cfg)
+
+	if todos[0].ID != "withpri" {
+		t.Errorf("expected todo with priority before todo without, got %q", todos[0].ID)
+	}
+}
+
+func TestShorterTaskHigherScoreWithSamePriority(t *testing.T) {
+	cfg := config.Defaults()
+	short := &model.Todo{ID: "short", Priorities: []string{"important"}, EstimatedHours: 1, CreatedAt: 1}
+	long := &model.Todo{ID: "long", Priorities: []string{"important"}, EstimatedHours: 8, CreatedAt: 2}
+
+	todos := []*model.Todo{long, short}
+	sorter.SortWithConfig(todos, false, cfg)
+
+	if todos[0].ID != "short" {
+		t.Errorf("expected shorter task (higher score) first, got %q", todos[0].ID)
 	}
 }

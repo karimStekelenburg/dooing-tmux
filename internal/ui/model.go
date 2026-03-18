@@ -10,6 +10,7 @@ import (
 
 	"github.com/karimStekelenburg/dooing-tmux/internal/config"
 	"github.com/karimStekelenburg/dooing-tmux/internal/model"
+	"github.com/karimStekelenburg/dooing-tmux/internal/priority"
 	"github.com/karimStekelenburg/dooing-tmux/internal/sorter"
 	"github.com/karimStekelenburg/dooing-tmux/internal/store"
 )
@@ -133,6 +134,9 @@ type Model struct {
 
 	// Help window state.
 	showHelp bool
+
+	// Priority selector state.
+	priSel prioritySelectorState
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -145,7 +149,7 @@ func NewModel(projectMode bool) Model {
 	cfg, _ := config.Load(config.DefaultConfigPath())
 
 	// Sort on load so initial display is correct.
-	sorter.Sort(todos, cfg.DoneSortByCompleted)
+	sorter.SortWithConfig(todos, cfg.DoneSortByCompleted, cfg)
 
 	ti := textinput.New()
 	ti.Placeholder = "Type your todo… (#tag to categorise)"
@@ -184,6 +188,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	}
+
+	// Priority selector intercepts input when open.
+	if m.priSel.open {
+		return m.updatePrioritySelector(msg)
 	}
 
 	// Confirmation dialog blocks all other input.
@@ -311,6 +320,12 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ti.Focus()
 		return m, textinput.Blink
 
+	// Priority selector
+	case "p":
+		if len(m.todos) > 0 {
+			m = m.openPrioritySelector(m.todos[m.cursor])
+		}
+
 	// Help
 	case "?":
 		m.showHelp = true
@@ -417,7 +432,7 @@ func (m *Model) sortTodos() {
 		selectedID = m.todos[m.cursor].ID
 	}
 
-	sorter.Sort(m.todos, m.cfg.DoneSortByCompleted)
+	sorter.SortWithConfig(m.todos, m.cfg.DoneSortByCompleted, m.cfg)
 
 	// Re-locate the cursor.
 	if selectedID != "" {
@@ -462,7 +477,7 @@ func (m Model) View() string {
 	}
 
 	for i, t := range m.todos {
-		line := renderTodo(t)
+		line := renderTodo(t, m.cfg)
 		if i == m.cursor && m.inputMode == inputModeNone && !m.showConfirm {
 			line = cursorStyle.Render("> ") + line
 		} else {
@@ -513,6 +528,12 @@ func (m Model) View() string {
 
 	mainView := borderStyle.Render(sb.String())
 
+	// Priority selector overlay — centered over main view.
+	if m.priSel.open {
+		sel := m.renderPrioritySelector()
+		return lipgloss.JoinHorizontal(lipgloss.Top, mainView, "  ", sel)
+	}
+
 	// Help window overlay — rendered side-by-side (right of main).
 	if m.showHelp {
 		help := renderHelpWindow()
@@ -556,15 +577,19 @@ func renderHelpWindow() string {
 			},
 		},
 		{
-			title: "Tags window",
+			title: "Priority selector (open with p)",
 			bindings: []binding{
-				{"(coming soon)", "Tag filtering — see issue #7"},
+				{"p", "Open priority selector"},
+				{"space", "Toggle priority checkbox"},
+				{"j / k", "Navigate priorities"},
+				{"enter", "Confirm selection"},
+				{"q / esc", "Cancel"},
 			},
 		},
 		{
-			title: "Calendar",
+			title: "Tags window",
 			bindings: []binding{
-				{"(coming soon)", "Due date picker — see issue #8"},
+				{"(coming soon)", "Tag filtering — see issue #7"},
 			},
 		},
 	}
@@ -595,6 +620,7 @@ func renderQuickKeys() string {
 	keys := [][2]string{
 		{"i", "create"},
 		{"e", "edit"},
+		{"p", "priority"},
 		{"x", "toggle"},
 		{"d", "delete"},
 		{"D", "del done"},
@@ -602,7 +628,6 @@ func renderQuickKeys() string {
 		{"j/k", "navigate"},
 		{"q", "quit"},
 		{"?", "help"},
-		{"ctrl+c", "force quit"},
 	}
 
 	half := (len(keys) + 1) / 2
@@ -630,7 +655,8 @@ func renderQuickKeys() string {
 }
 
 // renderTodo returns a styled single-line representation of t.
-func renderTodo(t *model.Todo) string {
+// cfg is used for priority group color resolution.
+func renderTodo(t *model.Todo, cfg config.Config) string {
 	var icon string
 	var textStyle lipgloss.Style
 
@@ -647,7 +673,22 @@ func renderTodo(t *model.Todo) string {
 	}
 
 	displayText := highlightTags(t.Text, textStyle)
-	return fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
+	line := fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
+
+	// Append priority label and apply group color if applicable.
+	label := priorityLabel(t)
+	if label != "" {
+		color := priority.ResolveColor(t, cfg)
+		if color != "" {
+			colorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+			line = colorStyle.Render(fmt.Sprintf("%s %s", icon, t.Text)) + " " +
+				lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(label)
+		} else {
+			line = line + " " + lipgloss.NewStyle().Faint(true).Render(label)
+		}
+	}
+
+	return line
 }
 
 // highlightTags renders the todo text with #tags coloured, applying baseStyle to non-tag parts.
