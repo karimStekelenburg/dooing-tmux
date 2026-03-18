@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/karimStekelenburg/dooing-tmux/internal/model"
 )
 
 func tempModel(t *testing.T) Model {
@@ -37,6 +39,15 @@ func typeText(m Model, text string) Model {
 	}
 	return m
 }
+
+// createTodo is a test helper that creates a todo via the UI flow.
+func createTodo(m Model, text string) Model {
+	m = sendKey(m, "i")
+	m = typeText(m, text)
+	return sendSpecialKey(m, tea.KeyEnter)
+}
+
+// ---- Basic model tests ----
 
 func TestNewModel(t *testing.T) {
 	m := NewModel(false)
@@ -82,14 +93,14 @@ func TestViewContainsTitle(t *testing.T) {
 	}
 }
 
+// ---- Issue #4: Creation & Editing ----
+
 func TestCreateTodo(t *testing.T) {
 	m := tempModel(t)
-
 	m = sendKey(m, "i")
 	if m.inputMode != inputModeCreate {
 		t.Fatal("expected inputModeCreate after pressing i")
 	}
-
 	m = typeText(m, "Buy groceries #shopping")
 	m = sendSpecialKey(m, tea.KeyEnter)
 
@@ -114,7 +125,6 @@ func TestCreateTodoEmpty(t *testing.T) {
 	m := tempModel(t)
 	m = sendKey(m, "i")
 	m = sendSpecialKey(m, tea.KeyEnter)
-
 	if len(m.todos) != 0 {
 		t.Fatalf("empty todo should not be created, got %d todos", len(m.todos))
 	}
@@ -125,7 +135,6 @@ func TestCreateTodoEscCancels(t *testing.T) {
 	m = sendKey(m, "i")
 	m = typeText(m, "Some text")
 	m = sendSpecialKey(m, tea.KeyEsc)
-
 	if m.inputMode != inputModeNone {
 		t.Fatal("expected inputModeNone after Esc")
 	}
@@ -136,15 +145,9 @@ func TestCreateTodoEscCancels(t *testing.T) {
 
 func TestEditTodo(t *testing.T) {
 	m := tempModel(t)
-
-	// Create a todo first.
-	m = sendKey(m, "i")
-	m = typeText(m, "Old text #work")
-	m = sendSpecialKey(m, tea.KeyEnter)
-
+	m = createTodo(m, "Old text #work")
 	originalID := m.todos[0].ID
 
-	// Edit it.
 	m = sendKey(m, "e")
 	if m.inputMode != inputModeEdit {
 		t.Fatal("expected inputModeEdit after pressing e")
@@ -152,8 +155,6 @@ func TestEditTodo(t *testing.T) {
 	if m.editingID != originalID {
 		t.Errorf("editingID mismatch")
 	}
-
-	// Overwrite value directly to simulate typing new text.
 	m.ti.SetValue("New text #personal")
 	m = sendSpecialKey(m, tea.KeyEnter)
 
@@ -170,33 +171,225 @@ func TestEditTodo(t *testing.T) {
 
 func TestNavigation(t *testing.T) {
 	m := tempModel(t)
-
-	for _, text := range []string{"First", "Second"} {
-		m = sendKey(m, "i")
-		m = typeText(m, text)
-		m = sendSpecialKey(m, tea.KeyEnter)
-	}
+	m = createTodo(m, "First")
+	m = createTodo(m, "Second")
 
 	if m.cursor != 1 {
 		t.Errorf("cursor should be at last created (1), got %d", m.cursor)
 	}
-
 	m = sendKey(m, "k")
 	if m.cursor != 0 {
 		t.Errorf("expected cursor 0 after k, got %d", m.cursor)
 	}
-	m = sendKey(m, "k") // should clamp
+	m = sendKey(m, "k") // clamp
 	if m.cursor != 0 {
 		t.Errorf("cursor should stay at 0, got %d", m.cursor)
 	}
-
 	m = sendKey(m, "j")
 	if m.cursor != 1 {
 		t.Errorf("expected cursor 1 after j, got %d", m.cursor)
 	}
-	m = sendKey(m, "j") // should clamp
+	m = sendKey(m, "j") // clamp
 	if m.cursor != 1 {
 		t.Errorf("cursor should stay at 1, got %d", m.cursor)
+	}
+}
+
+// ---- Issue #5: Toggle, Delete & Undo ----
+
+func TestToggleCycleStates(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "Toggle me")
+
+	// pending → in_progress
+	m = sendKey(m, "x")
+	if m.todos[0].GetState() != model.StateInProgress {
+		t.Errorf("expected StateInProgress after first toggle, got %v", m.todos[0].GetState())
+	}
+
+	// in_progress → done
+	m = sendKey(m, "x")
+	if m.todos[0].GetState() != model.StateDone {
+		t.Errorf("expected StateDone after second toggle, got %v", m.todos[0].GetState())
+	}
+	if m.todos[0].CompletedAt == nil {
+		t.Error("CompletedAt should be set when done")
+	}
+
+	// done → pending
+	m = sendKey(m, "x")
+	if m.todos[0].GetState() != model.StatePending {
+		t.Errorf("expected StatePending after third toggle, got %v", m.todos[0].GetState())
+	}
+	if m.todos[0].CompletedAt != nil {
+		t.Error("CompletedAt should be cleared when back to pending")
+	}
+}
+
+func TestDeleteDoneTodoImmediately(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "Done item")
+	// Toggle to done (pending → in_progress → done).
+	m = sendKey(m, "x")
+	m = sendKey(m, "x")
+
+	m = sendKey(m, "d")
+	// No confirmation dialog should appear for done todos.
+	if m.showConfirm {
+		t.Error("should not show confirmation for done todo")
+	}
+	if len(m.todos) != 0 {
+		t.Errorf("expected 0 todos after deleting done todo, got %d", len(m.todos))
+	}
+}
+
+func TestDeleteIncompleteTodoShowsConfirm(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "Pending item")
+
+	m = sendKey(m, "d")
+	if !m.showConfirm {
+		t.Fatal("expected confirmation dialog for incomplete todo")
+	}
+	if m.confirmTodoIdx != 0 {
+		t.Errorf("confirmTodoIdx should be 0, got %d", m.confirmTodoIdx)
+	}
+	if len(m.todos) != 1 {
+		t.Error("todo should not be deleted yet (dialog shown)")
+	}
+}
+
+func TestDeleteConfirmYes(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "Pending item")
+	m = sendKey(m, "d") // show confirm
+	m = sendKey(m, "y") // confirm
+
+	if m.showConfirm {
+		t.Error("dialog should be dismissed")
+	}
+	if len(m.todos) != 0 {
+		t.Errorf("expected 0 todos after confirming delete, got %d", len(m.todos))
+	}
+}
+
+func TestDeleteConfirmNo(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "Pending item")
+	m = sendKey(m, "d") // show confirm
+	m = sendKey(m, "n") // cancel
+
+	if m.showConfirm {
+		t.Error("dialog should be dismissed")
+	}
+	if len(m.todos) != 1 {
+		t.Errorf("expected 1 todo after cancelling delete, got %d", len(m.todos))
+	}
+}
+
+func TestDeleteConfirmEsc(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "Pending item")
+	m = sendKey(m, "d")               // show confirm
+	m = sendSpecialKey(m, tea.KeyEsc) // cancel with Esc
+
+	if m.showConfirm {
+		t.Error("dialog should be dismissed after Esc")
+	}
+	if len(m.todos) != 1 {
+		t.Error("todo should not be deleted after Esc")
+	}
+}
+
+func TestDeleteAllCompleted(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "Todo 1")
+	m = createTodo(m, "Todo 2 done")
+	m = createTodo(m, "Todo 3 done")
+
+	// Mark todos 1 and 2 as done (index 1 and 2).
+	m.cursor = 1
+	m = sendKey(m, "x")
+	m = sendKey(m, "x")
+	m.cursor = 2
+	m = sendKey(m, "x")
+	m = sendKey(m, "x")
+
+	m = sendKey(m, "D")
+
+	if len(m.todos) != 1 {
+		t.Errorf("expected 1 todo after D, got %d", len(m.todos))
+	}
+	if m.todos[0].Text != "Todo 1" {
+		t.Errorf("expected 'Todo 1' to remain, got %q", m.todos[0].Text)
+	}
+	if len(m.undoStack) != 2 {
+		t.Errorf("expected 2 undo entries, got %d", len(m.undoStack))
+	}
+}
+
+func TestUndoDeleteRestoresTodo(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "Restore me #work")
+	// Toggle to done and delete.
+	m = sendKey(m, "x")
+	m = sendKey(m, "x")
+	m = sendKey(m, "d")
+
+	if len(m.todos) != 0 {
+		t.Fatal("todo should be deleted before undo")
+	}
+
+	m = sendKey(m, "u")
+	if len(m.todos) != 1 {
+		t.Fatalf("expected 1 todo after undo, got %d", len(m.todos))
+	}
+	if m.todos[0].Text != "Restore me #work" {
+		t.Errorf("unexpected text after undo: %q", m.todos[0].Text)
+	}
+	if m.statusMsg != "Todo restored" {
+		t.Errorf("expected 'Todo restored' status, got %q", m.statusMsg)
+	}
+}
+
+func TestUndoMultiple(t *testing.T) {
+	m := tempModel(t)
+	m = createTodo(m, "First")
+	m = createTodo(m, "Second")
+
+	// Delete both (toggle to done first).
+	m.cursor = 0
+	m = sendKey(m, "x")
+	m = sendKey(m, "x")
+	m = sendKey(m, "d")
+
+	m.cursor = 0 // "Second" is now at index 0
+	m = sendKey(m, "x")
+	m = sendKey(m, "x")
+	m = sendKey(m, "d")
+
+	if len(m.todos) != 0 {
+		t.Fatalf("expected 0 todos after two deletes, got %d", len(m.todos))
+	}
+
+	// Undo twice.
+	m = sendKey(m, "u")
+	if len(m.todos) != 1 {
+		t.Fatalf("expected 1 todo after first undo, got %d", len(m.todos))
+	}
+
+	m = sendKey(m, "u")
+	if len(m.todos) != 2 {
+		t.Fatalf("expected 2 todos after second undo, got %d", len(m.todos))
+	}
+}
+
+func TestUndoStackEmpty(t *testing.T) {
+	m := tempModel(t)
+	// Pressing u with nothing to undo should be a no-op.
+	m = sendKey(m, "u")
+	if len(m.todos) != 0 {
+		t.Error("pressing u with empty undo stack should be a no-op")
 	}
 }
 
