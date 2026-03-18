@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/karimStekelenburg/dooing-tmux/internal/config"
 	"github.com/karimStekelenburg/dooing-tmux/internal/model"
+	"github.com/karimStekelenburg/dooing-tmux/internal/server"
 	"github.com/karimStekelenburg/dooing-tmux/internal/sorter"
 	"github.com/karimStekelenburg/dooing-tmux/internal/store"
 )
@@ -168,6 +170,10 @@ type Model struct {
 
 	// Due notifications overlay.
 	notif notifState
+
+	// HTTP share server state.
+	srv       *server.Server    // nil until started
+	srvCancel context.CancelFunc // cancels the server context
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -254,6 +260,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.notif.open {
 		return m.updateNotifications(msg)
 	}
+
+	// Handle server error message.
+	if srvErr, ok := msg.(serverErrMsg); ok {
+		if srvErr.err != nil {
+			m.statusMsg = "Share server stopped: " + srvErr.err.Error()
+			m.srv = nil
+			m.srvCancel = nil
+		}
+		return m, nil
+	}
+
 
 	// Help window intercepts input when open.
 	if m.showHelp {
@@ -392,6 +409,7 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.editingID = ""
 		m.ti.SetValue("")
 		m.ti.Blur()
+		m.syncServerTodos()
 		return m, nil
 
 	case "esc":
@@ -423,6 +441,7 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch key.String() {
 	case "q", "ctrl+c":
+		m.stopServer()
 		return m, tea.Quit
 
 	// Navigation
@@ -538,6 +557,10 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Reload failed: " + err.Error()
 		}
 
+	// Share via HTTP server (QR code)
+	case "W":
+		return m.toggleServer()
+
 	// Search
 	case "/":
 		m.openSearch()
@@ -634,6 +657,7 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "Todo restored"
 	}
 
+	m.syncServerTodos()
 	return m, nil
 }
 
@@ -655,6 +679,7 @@ func (m Model) deleteTodoAt(idx int) Model {
 		m.cursor = 0
 	}
 	_ = m.st.Save(m.storePath, m.todos)
+	m.syncServerTodos()
 	return m
 }
 
@@ -905,6 +930,7 @@ func renderHelpWindow() string {
 				{"f", "Reload todos from disk"},
 				{"I", "Import todos from JSON file (merge + dedup)"},
 				{"E", "Export todos to JSON file"},
+				{"W", "Toggle LAN sharing server (QR code)"},
 				{"?", "Toggle this help window"},
 				{"q / ctrl+c", "Quit"},
 			},

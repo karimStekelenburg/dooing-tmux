@@ -54,6 +54,7 @@ type Config struct {
 	ProjectFile         string                    `toml:"project_file"`
 	AutoGitignore       string                    `toml:"auto_gitignore"` // "true", "false", "prompt"
 	OnMissingProject    string                    `toml:"on_missing_project"` // "prompt", "auto_create"
+	ServePort           int                       `toml:"serve_port"` // HTTP server port (default 7283)
 }
 
 // Defaults returns a Config with sensible defaults matching the original plugin.
@@ -99,6 +100,7 @@ func Defaults() Config {
 		ProjectFile:         "dooing.json",
 		AutoGitignore:       "prompt",
 		OnMissingProject:    "prompt",
+		ServePort:           7283,
 	}
 }
 
