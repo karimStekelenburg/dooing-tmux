@@ -155,6 +155,9 @@ type Model struct {
 
 	// Search overlay state.
 	search searchState
+
+	// Scratchpad (notes editor) state.
+	scratchpad scratchpadState
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -233,6 +236,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Search overlay intercepts when open.
 	if m.search.open {
 		return m.updateSearch(msg)
+	}
+
+	// Scratchpad intercepts when open.
+	if m.scratchpad.open {
+		return m.updateScratchpad(msg)
 	}
 
 	// Confirmation dialog blocks all other input.
@@ -434,6 +442,10 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Search
 	case "/":
 		m.openSearch()
+
+	// Scratchpad / notes
+	case "s":
+		m.openScratchpad()
 
 	// Remove due date
 	case "r":
@@ -718,6 +730,12 @@ func (m Model) View() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, searchView, "  ", mainView)
 	}
 
+	// Scratchpad overlay — rendered left of main.
+	if m.scratchpad.open {
+		padView := m.renderScratchpad()
+		return lipgloss.JoinHorizontal(lipgloss.Top, padView, "  ", mainView)
+	}
+
 	// Help window overlay — rendered side-by-side (right of main).
 	if m.showHelp {
 		help := renderHelpWindow()
@@ -757,6 +775,7 @@ func renderHelpWindow() string {
 				{"T", "Set time estimate (30m, 2h, 1d, 0.5w)"},
 				{"R", "Remove time estimate"},
 				{"/", "Open search"},
+				{"s", "Open notes/scratchpad (Esc saves)"},
 				{"x", "Toggle todo status (pending → in progress → done)"},
 				{"d", "Delete selected todo"},
 				{"D", "Delete all completed todos"},
@@ -880,6 +899,11 @@ func renderTodo(t *model.Todo, groups map[string]config.PriorityGroup) string {
 	// Append due date if present.
 	if t.DueAt != nil {
 		line += " " + formatDueDate(t.DueAt, t.Done)
+	}
+
+	// Append notes icon if present.
+	if icon := renderNotesIcon(t.Notes); icon != "" {
+		line += " " + icon
 	}
 
 	// Append priority label if present.
