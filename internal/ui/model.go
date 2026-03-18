@@ -137,6 +137,9 @@ type Model struct {
 	// Tag window state.
 	tagWin      tagWindowState
 	activeFilter string // currently active tag filter (empty = no filter)
+
+	// Priority selector state.
+	prioritySel prioritySelectorState
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -149,7 +152,7 @@ func NewModel(projectMode bool) Model {
 	cfg, _ := config.Load(config.DefaultConfigPath())
 
 	// Sort on load so initial display is correct.
-	sorter.Sort(todos, cfg.DoneSortByCompleted)
+	sorter.Sort(todos, cfg.DoneSortByCompleted, cfg)
 
 	ti := textinput.New()
 	ti.Placeholder = "Type your todo… (#tag to categorise)"
@@ -194,6 +197,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Tag window intercepts input when open.
 	if m.tagWin.open {
 		return m.updateTagWindow(msg)
+	}
+
+	// Priority selector intercepts input when open.
+	if m.prioritySel.open {
+		return m.updatePrioritySelector(msg)
 	}
 
 	// Confirmation dialog blocks all other input.
@@ -331,6 +339,10 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tagWin.mode = tagWindowBrowse
 		m.tagWin.refreshTags(m.todos)
 
+	// Priority selector
+	case "p":
+		m.openPrioritySelector()
+
 	// Clear filter
 	case "c":
 		m.activeFilter = ""
@@ -455,7 +467,7 @@ func (m *Model) sortTodos() {
 		selectedID = m.todos[m.cursor].ID
 	}
 
-	sorter.Sort(m.todos, m.cfg.DoneSortByCompleted)
+	sorter.Sort(m.todos, m.cfg.DoneSortByCompleted, m.cfg)
 
 	// Re-locate the cursor.
 	if selectedID != "" {
@@ -510,7 +522,7 @@ func (m Model) View() string {
 	}
 
 	for i, t := range visible {
-		line := renderTodo(t)
+		line := renderTodo(t, m.cfg.PriorityGroups)
 		if i == m.cursor && m.inputMode == inputModeNone && !m.showConfirm {
 			line = cursorStyle.Render("> ") + line
 		} else {
@@ -565,6 +577,12 @@ func (m Model) View() string {
 	if m.tagWin.open {
 		tagView := m.renderTagWindow()
 		return lipgloss.JoinHorizontal(lipgloss.Top, tagView, "  ", mainView)
+	}
+
+	// Priority selector overlay — rendered left of main.
+	if m.prioritySel.open {
+		priView := m.renderPrioritySelector()
+		return lipgloss.JoinHorizontal(lipgloss.Top, priView, "  ", mainView)
 	}
 
 	// Help window overlay — rendered side-by-side (right of main).
@@ -695,7 +713,7 @@ func renderQuickKeys() string {
 }
 
 // renderTodo returns a styled single-line representation of t.
-func renderTodo(t *model.Todo) string {
+func renderTodo(t *model.Todo, groups map[string]config.PriorityGroup) string {
 	var icon string
 	var textStyle lipgloss.Style
 
@@ -712,7 +730,20 @@ func renderTodo(t *model.Todo) string {
 	}
 
 	displayText := highlightTags(t.Text, textStyle)
-	return fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
+	line := fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
+
+	// Append priority label if present.
+	if len(t.Priorities) > 0 {
+		line += " " + renderPriorityLabel(t.Priorities, groups)
+	}
+
+	// Apply priority group color to the whole line if resolved.
+	color := resolvePriorityColor(t.Priorities, groups)
+	if color != "" && t.GetState() != model.StateDone {
+		line = lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(line)
+	}
+
+	return line
 }
 
 // highlightTags renders the todo text with #tags coloured, applying baseStyle to non-tag parts.

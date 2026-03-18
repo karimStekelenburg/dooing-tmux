@@ -100,9 +100,6 @@ func TestTagWindowFilterOnEnter(t *testing.T) {
 	// cursor should be at 0 (first tag alphabetically)
 	m = sendKey(m, "enter") // select first tag as filter
 
-	if !m.tagWin.open == false {
-		// tag window closes on enter
-	}
 	if m.tagWin.open {
 		t.Fatal("tag window should close after selecting a tag")
 	}
