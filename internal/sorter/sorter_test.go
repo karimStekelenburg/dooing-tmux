@@ -12,7 +12,6 @@ func makeTime(offset int64) int64 {
 	return time.Now().Unix() + offset
 }
 
-func ptr(v int64) *int64 { return &v }
 
 func TestUndoneBeforeDone(t *testing.T) {
 	done := &model.Todo{ID: "1", Text: "done", Done: true, CreatedAt: 1}
