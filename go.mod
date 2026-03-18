@@ -1,6 +1,6 @@
 module github.com/karimStekelenburg/dooing-tmux
 
-go 1.25.0
+go 1.23.0
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
