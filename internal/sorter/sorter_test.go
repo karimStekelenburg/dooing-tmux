@@ -122,3 +122,34 @@ func TestInProgressTreatedAsUndone(t *testing.T) {
 		t.Errorf("expected in-progress before done, got %q", todos[0].ID)
 	}
 }
+
+func TestSortNestedPreservesTreeOrder(t *testing.T) {
+	root1 := &model.Todo{ID: "r1", Text: "root1", CreatedAt: 1}
+	root2 := &model.Todo{ID: "r2", Text: "root2", CreatedAt: 2}
+	child1a := &model.Todo{ID: "c1a", Text: "child1a", ParentID: "r1", Depth: 1, CreatedAt: 3}
+	child1b := &model.Todo{ID: "c1b", Text: "child1b", ParentID: "r1", Depth: 1, CreatedAt: 4}
+	grandchild := &model.Todo{ID: "gc", Text: "grandchild", ParentID: "c1a", Depth: 2, CreatedAt: 5}
+
+	todos := []*model.Todo{grandchild, root2, child1b, root1, child1a}
+	result := sorter.SortNested(todos, false)
+
+	// Expected order: r1, c1a, gc, c1b, r2
+	expected := []string{"r1", "c1a", "gc", "c1b", "r2"}
+	for i, id := range expected {
+		if result[i].ID != id {
+			t.Errorf("position %d: expected %q got %q", i, id, result[i].ID)
+		}
+	}
+}
+
+func TestSortNestedParentDeletion(t *testing.T) {
+	// After parent deletion and orphan promotion, children should be top-level.
+	orphan := &model.Todo{ID: "o1", Text: "orphan", ParentID: "", Depth: 0, CreatedAt: 1}
+	other := &model.Todo{ID: "o2", Text: "other", ParentID: "", Depth: 0, CreatedAt: 2}
+
+	todos := []*model.Todo{other, orphan}
+	result := sorter.SortNested(todos, false)
+	if len(result) != 2 {
+		t.Fatalf("expected 2 todos, got %d", len(result))
+	}
+}

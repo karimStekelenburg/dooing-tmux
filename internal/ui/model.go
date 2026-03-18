@@ -18,9 +18,10 @@ import (
 type inputMode int
 
 const (
-	inputModeNone   inputMode = iota
-	inputModeCreate           // 'i' — new todo
-	inputModeEdit             // 'e' — edit existing todo
+	inputModeNone         inputMode = iota
+	inputModeCreate                 // 'i' — new todo
+	inputModeEdit                   // 'e' — edit existing todo
+	inputModeCreateNested           // 'n' — new child todo
 )
 
 // undoEntry stores a deleted todo for possible restoration.
@@ -140,6 +141,11 @@ type Model struct {
 
 	// Priority selector state.
 	prioritySel prioritySelectorState
+
+	// Nested tasks state.
+	nested            nestedState
+	nestedParentID    string // set when inputMode == inputModeCreateNested
+	nestedParentDepth int    // depth of the parent todo
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -152,7 +158,7 @@ func NewModel(projectMode bool) Model {
 	cfg, _ := config.Load(config.DefaultConfigPath())
 
 	// Sort on load so initial display is correct.
-	sorter.Sort(todos, cfg.DoneSortByCompleted, cfg)
+	todos = sorter.SortNested(todos, cfg.DoneSortByCompleted, cfg)
 
 	ti := textinput.New()
 	ti.Placeholder = "Type your todo… (#tag to categorise)"
@@ -167,6 +173,7 @@ func NewModel(projectMode bool) Model {
 		cfg:         cfg,
 		ti:          ti,
 		tagWin:      newTagWindowState(),
+		nested:      newNestedState(),
 	}
 }
 
@@ -255,6 +262,20 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = len(m.todos) - 1 // point at new todo before sort
 			m.sortTodos()               // cursor follows the new todo by ID
 			_ = m.st.Save(m.storePath, m.todos)
+		case inputModeCreateNested:
+			t := model.NewTodo(text)
+			t.ParentID = m.nestedParentID
+			t.Depth = m.nestedParentDepth + 1
+			// Insert after parent and all existing children.
+			insertAt := m.insertionIndexForChild(m.nestedParentID)
+			m.todos = append(m.todos, nil)
+			copy(m.todos[insertAt+1:], m.todos[insertAt:])
+			m.todos[insertAt] = t
+			m.cursor = insertAt
+			m.sortTodos()
+			_ = m.st.Save(m.storePath, m.todos)
+			m.nestedParentID = ""
+			m.nestedParentDepth = 0
 		case inputModeEdit:
 			for _, t := range m.todos {
 				if t.ID == m.editingID {
@@ -275,6 +296,8 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.inputMode = inputModeNone
 		m.editingID = ""
+		m.nestedParentID = ""
+		m.nestedParentDepth = 0
 		m.ti.SetValue("")
 		m.ti.Blur()
 		return m, nil
@@ -294,8 +317,8 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Clear status message on any keypress.
 	m.statusMsg = ""
 
-	// Build visible (filtered) slice once.
-	visible := m.filteredTodos()
+	// Build visible (fold+filter aware) slice once.
+	visible := m.visibleTodos()
 
 	switch key.String() {
 	case "q", "ctrl+c":
@@ -318,6 +341,24 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ti.Placeholder = "Type your todo… (#tag to categorise)"
 		m.ti.Focus()
 		return m, textinput.Blink
+
+	// Create nested child
+	case "n":
+		return m, m.createNestedTodo()
+
+	// Fold/unfold
+	case "z", "tab":
+		if len(visible) > 0 {
+			t := visible[m.cursor]
+			if hasChildren(m.todos, t.ID) {
+				m.nested.toggleFold(t.ID)
+				// Keep cursor in bounds after fold.
+				newVisible := m.visibleTodos()
+				if m.cursor >= len(newVisible) && len(newVisible) > 0 {
+					m.cursor = len(newVisible) - 1
+				}
+			}
+		}
 
 	// Edit
 	case "e":
@@ -391,8 +432,9 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			remaining = []*model.Todo{}
 		}
 		m.todos = remaining
+		promoteOrphans(m.todos)
 		m.sortTodos()
-		vis := m.filteredTodos()
+		vis := m.visibleTodos()
 		if m.cursor >= len(vis) && len(vis) > 0 {
 			m.cursor = len(vis) - 1
 		} else if len(vis) == 0 {
@@ -436,7 +478,9 @@ func (m Model) deleteTodoAt(idx int) Model {
 	t := m.todos[idx]
 	m.pushUndo(t, idx)
 	m.todos = append(m.todos[:idx], m.todos[idx+1:]...)
-	vis := m.filteredTodos()
+	// Promote children whose parent was just deleted.
+	promoteOrphans(m.todos)
+	vis := m.visibleTodos()
 	if m.cursor >= len(vis) && len(vis) > 0 {
 		m.cursor = len(vis) - 1
 	} else if len(vis) == 0 {
@@ -467,7 +511,7 @@ func (m *Model) sortTodos() {
 		selectedID = m.todos[m.cursor].ID
 	}
 
-	sorter.Sort(m.todos, m.cfg.DoneSortByCompleted, m.cfg)
+	m.todos = sorter.SortNested(m.todos, m.cfg.DoneSortByCompleted, m.cfg)
 
 	// Re-locate the cursor.
 	if selectedID != "" {
@@ -511,7 +555,7 @@ func (m Model) View() string {
 		sb.WriteString(header)
 	}
 
-	visible := m.filteredTodos()
+	visible := m.visibleTodos()
 	if len(visible) == 0 && m.inputMode == inputModeNone {
 		if m.activeFilter != "" {
 			sb.WriteString(lipgloss.NewStyle().Faint(true).Render("No todos matching #" + m.activeFilter + "."))
@@ -521,12 +565,23 @@ func (m Model) View() string {
 		sb.WriteString("\n")
 	}
 
+	indentSize := m.cfg.IndentSize
+	if indentSize <= 0 {
+		indentSize = 2
+	}
+
 	for i, t := range visible {
 		line := renderTodo(t, m.cfg.PriorityGroups)
+		// Add fold indicator if this todo has folded children.
+		if m.nested.isFolded(t.ID) && hasChildren(m.todos, t.ID) {
+			childCount := countDescendants(m.todos, t.ID)
+			line += " " + foldedStyle.Render("[+"+itoa(childCount)+"]")
+		}
+		indent := renderIndent(t.Depth, indentSize)
 		if i == m.cursor && m.inputMode == inputModeNone && !m.showConfirm {
-			line = cursorStyle.Render("> ") + line
+			line = cursorStyle.Render("> ") + indent + line
 		} else {
-			line = "  " + line
+			line = "  " + indent + line
 		}
 		sb.WriteString(line)
 		sb.WriteString("\n")
@@ -536,8 +591,11 @@ func (m Model) View() string {
 	if m.inputMode != inputModeNone {
 		sb.WriteString("\n")
 		prompt := "New todo:"
-		if m.inputMode == inputModeEdit {
+		switch m.inputMode {
+		case inputModeEdit:
 			prompt = "Edit todo:"
+		case inputModeCreateNested:
+			prompt = "New child todo:"
 		}
 		inputBlock := inputBorderStyle.Render(
 			lipgloss.NewStyle().Bold(true).Render(prompt) + "\n" + m.ti.View(),
@@ -616,6 +674,8 @@ func renderHelpWindow() string {
 			title: "Main window",
 			bindings: []binding{
 				{"i", "Create new todo"},
+				{"n", "Create child todo (nested)"},
+				{"z / tab", "Fold/unfold children"},
 				{"e", "Edit selected todo"},
 				{"x", "Toggle todo status (pending → in progress → done)"},
 				{"d", "Delete selected todo"},

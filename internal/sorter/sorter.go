@@ -117,3 +117,58 @@ func completedTime(t *model.Todo) int64 {
 	}
 	return *t.CompletedAt
 }
+
+// SortNested performs structure-aware sort that preserves parent-child tree order.
+// Top-level todos (depth=0, no parentID) are sorted by the standard comparator.
+// Each parent's children are gathered recursively and sorted among themselves.
+// The result is a flat slice in depth-first tree order.
+func SortNested(todos []*model.Todo, doneSortByCompleted bool, cfg ...config.Config) []*model.Todo {
+	var c config.Config
+	if len(cfg) > 0 {
+		c = cfg[0]
+	}
+
+	// Separate top-level todos.
+	var roots []*model.Todo
+	children := make(map[string][]*model.Todo)
+	for _, t := range todos {
+		if t.ParentID == "" {
+			roots = append(roots, t)
+		} else {
+			children[t.ParentID] = append(children[t.ParentID], t)
+		}
+	}
+
+	// Sort roots.
+	sort.SliceStable(roots, func(i, j int) bool {
+		return less(roots[i], roots[j], doneSortByCompleted, c)
+	})
+
+	// Sort each set of siblings.
+	for pid := range children {
+		siblings := children[pid]
+		sort.SliceStable(siblings, func(i, j int) bool {
+			return less(siblings[i], siblings[j], doneSortByCompleted, c)
+		})
+		children[pid] = siblings
+	}
+
+	// Reconstruct flat array depth-first.
+	var result []*model.Todo
+	var walk func(parentID string)
+	walk = func(parentID string) {
+		var items []*model.Todo
+		if parentID == "" {
+			items = roots
+		} else {
+			items = children[parentID]
+		}
+		for _, t := range items {
+			result = append(result, t)
+			walk(t.ID)
+		}
+	}
+	walk("")
+
+	return result
+}
