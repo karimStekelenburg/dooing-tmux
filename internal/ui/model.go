@@ -21,6 +21,14 @@ const (
 	inputModeEdit             // 'e' — edit existing todo
 )
 
+// undoEntry stores a deleted todo for possible restoration.
+type undoEntry struct {
+	todo          *model.Todo
+	originalIndex int
+}
+
+const maxUndoStack = 100
+
 var (
 	borderStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -56,6 +64,18 @@ var (
 	statusStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("86")).
 			Italic(true)
+
+	dialogBorderStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("196")).
+				Padding(0, 2)
+
+	dialogTitleStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.Color("196"))
+
+	dialogFooterStyle = lipgloss.NewStyle().
+				Faint(true)
 )
 
 // Model is the root Bubble Tea model for dooing-tmux.
@@ -72,6 +92,13 @@ type Model struct {
 	inputMode inputMode
 	editingID string // set when inputMode == inputModeEdit
 	ti        textinput.Model
+
+	// Confirmation dialog state.
+	showConfirm    bool
+	confirmTodoIdx int // index of todo pending delete confirmation
+
+	// Undo stack (in-memory only, not persisted).
+	undoStack []undoEntry
 
 	statusMsg string // transient flash message
 }
@@ -111,12 +138,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// If text input is active, route keys there first.
+	// Confirmation dialog blocks all other input.
+	if m.showConfirm {
+		return m.updateConfirm(msg)
+	}
+
+	// If text input is active, route keys there.
 	if m.inputMode != inputModeNone {
 		return m.updateInput(msg)
 	}
 
 	return m.updateNormal(msg)
+}
+
+func (m Model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch key.String() {
+	case "y", "Y":
+		m = m.deleteTodoAt(m.confirmTodoIdx)
+		m.showConfirm = false
+		m.confirmTodoIdx = 0
+	case "n", "N", "q", "esc":
+		m.showConfirm = false
+		m.confirmTodoIdx = 0
+	}
+	return m, nil
 }
 
 func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -131,7 +180,6 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "enter":
 		text := strings.TrimSpace(m.ti.Value())
 		if text == "" {
-			// reject empty
 			return m, nil
 		}
 		switch m.inputMode {
@@ -212,9 +260,104 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ti.CursorEnd()
 		m.ti.Focus()
 		return m, textinput.Blink
+
+	// Toggle
+	case "x":
+		if len(m.todos) == 0 {
+			break
+		}
+		m.todos[m.cursor].Toggle()
+		_ = m.st.Save(m.storePath, m.todos)
+
+	// Delete
+	case "d":
+		if len(m.todos) == 0 {
+			break
+		}
+		t := m.todos[m.cursor]
+		if t.GetState() == model.StateDone {
+			// Done todo: delete immediately.
+			m = m.deleteTodoAt(m.cursor)
+		} else {
+			// Incomplete: ask for confirmation.
+			m.showConfirm = true
+			m.confirmTodoIdx = m.cursor
+		}
+
+	// Delete all completed
+	case "D":
+		var remaining []*model.Todo
+		for i, t := range m.todos {
+			if t.GetState() == model.StateDone {
+				m.pushUndo(t, i)
+			} else {
+				remaining = append(remaining, t)
+			}
+		}
+		if remaining == nil {
+			remaining = []*model.Todo{}
+		}
+		m.todos = remaining
+		if m.cursor >= len(m.todos) && len(m.todos) > 0 {
+			m.cursor = len(m.todos) - 1
+		} else if len(m.todos) == 0 {
+			m.cursor = 0
+		}
+		_ = m.st.Save(m.storePath, m.todos)
+
+	// Undo
+	case "u":
+		if len(m.undoStack) == 0 {
+			break
+		}
+		last := m.undoStack[len(m.undoStack)-1]
+		m.undoStack = m.undoStack[:len(m.undoStack)-1]
+
+		idx := last.originalIndex
+		if idx > len(m.todos) {
+			idx = len(m.todos)
+		}
+
+		// Re-insert at original index.
+		m.todos = append(m.todos, nil)
+		copy(m.todos[idx+1:], m.todos[idx:])
+		m.todos[idx] = last.todo
+		m.cursor = idx
+
+		_ = m.st.Save(m.storePath, m.todos)
+		m.statusMsg = "Todo restored"
 	}
 
 	return m, nil
+}
+
+// deleteTodoAt removes the todo at idx, saves to disk, and adjusts cursor.
+// It also pushes an undo entry.
+func (m Model) deleteTodoAt(idx int) Model {
+	if idx < 0 || idx >= len(m.todos) {
+		return m
+	}
+	t := m.todos[idx]
+	m.pushUndo(t, idx)
+	m.todos = append(m.todos[:idx], m.todos[idx+1:]...)
+	if m.cursor >= len(m.todos) && len(m.todos) > 0 {
+		m.cursor = len(m.todos) - 1
+	} else if len(m.todos) == 0 {
+		m.cursor = 0
+	}
+	_ = m.st.Save(m.storePath, m.todos)
+	return m
+}
+
+// pushUndo adds an entry to the undo stack, capping at maxUndoStack.
+func (m *Model) pushUndo(t *model.Todo, idx int) {
+	// Deep copy to avoid mutation after deletion.
+	cp := *t
+	entry := undoEntry{todo: &cp, originalIndex: idx}
+	m.undoStack = append(m.undoStack, entry)
+	if len(m.undoStack) > maxUndoStack {
+		m.undoStack = m.undoStack[len(m.undoStack)-maxUndoStack:]
+	}
 }
 
 // View implements tea.Model.
@@ -235,7 +378,7 @@ func (m Model) View() string {
 
 	for i, t := range m.todos {
 		line := renderTodo(t)
-		if i == m.cursor && m.inputMode == inputModeNone {
+		if i == m.cursor && m.inputMode == inputModeNone && !m.showConfirm {
 			line = cursorStyle.Render("> ") + line
 		} else {
 			line = "  " + line
@@ -255,6 +398,21 @@ func (m Model) View() string {
 			lipgloss.NewStyle().Bold(true).Render(prompt) + "\n" + m.ti.View(),
 		)
 		sb.WriteString(inputBlock)
+		sb.WriteString("\n")
+	}
+
+	// Confirmation dialog
+	if m.showConfirm && m.confirmTodoIdx < len(m.todos) {
+		todoText := m.todos[m.confirmTodoIdx].Text
+		// Truncate for display.
+		if len(todoText) > 50 {
+			todoText = todoText[:47] + "…"
+		}
+		dialogContent := dialogTitleStyle.Render(" Delete incomplete todo? ") + "\n\n" +
+			lipgloss.NewStyle().Faint(true).Render(todoText) + "\n\n" +
+			dialogFooterStyle.Render(" [Y]es - [N]o ")
+		sb.WriteString("\n")
+		sb.WriteString(dialogBorderStyle.Render(dialogContent))
 		sb.WriteString("\n")
 	}
 
@@ -288,7 +446,6 @@ func renderTodo(t *model.Todo) string {
 		textStyle = pendingStyle
 	}
 
-	// Highlight #tags in text.
 	displayText := highlightTags(t.Text, textStyle)
 	return fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
 }
