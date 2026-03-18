@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -158,16 +159,36 @@ type Model struct {
 
 	// Scratchpad (notes editor) state.
 	scratchpad scratchpadState
+
+	// Project mode state.
+	projectDirName string // basename of git root for title; empty = global
+	projectErr     string // set when project mode failed (not in git repo, etc.)
 }
 
 // NewModel creates a new root model, loading todos from disk.
 func NewModel(projectMode bool) Model {
+	cfg, _ := config.Load(config.DefaultConfigPath())
+
 	path := store.DefaultPath()
+	var projectDirName string
+	var projectErr string
+
+	if projectMode {
+		projPath, err := projectStorePath(cfg.ProjectFile)
+		if err != nil {
+			projectErr = err.Error()
+		} else {
+			path = projPath
+			// Extract dirname for the title.
+			root := filepath.Dir(projPath)
+			projectDirName = filepath.Base(root)
+			// Handle gitignore.
+			ensureGitignore(root, cfg.ProjectFile, cfg.AutoGitignore)
+		}
+	}
 
 	st := store.New()
 	todos, _ := st.Load(path)
-
-	cfg, _ := config.Load(config.DefaultConfigPath())
 
 	// Sort on load so initial display is correct.
 	todos = sorter.SortNested(todos, cfg.DoneSortByCompleted, cfg)
@@ -178,14 +199,16 @@ func NewModel(projectMode bool) Model {
 	ti.Width = 50
 
 	return Model{
-		projectMode: projectMode,
-		todos:       todos,
-		storePath:   path,
-		st:          st,
-		cfg:         cfg,
-		ti:          ti,
-		tagWin:      newTagWindowState(),
-		nested:      newNestedState(),
+		projectMode:    projectMode,
+		projectDirName: projectDirName,
+		projectErr:     projectErr,
+		todos:          todos,
+		storePath:      path,
+		st:             st,
+		cfg:            cfg,
+		ti:             ti,
+		tagWin:         newTagWindowState(),
+		nested:         newNestedState(),
 	}
 }
 
@@ -439,6 +462,20 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = "Time estimate removed"
 		}
 
+	// Reload from disk
+	case "f":
+		fresh, err := m.st.Load(m.storePath)
+		if err == nil {
+			m.todos = sorter.SortNested(fresh, m.cfg.DoneSortByCompleted, m.cfg)
+			vis := m.visibleTodos()
+			if m.cursor >= len(vis) && len(vis) > 0 {
+				m.cursor = len(vis) - 1
+			}
+			m.statusMsg = "Reloaded from disk"
+		} else {
+			m.statusMsg = "Reload failed: " + err.Error()
+		}
+
 	// Search
 	case "/":
 		m.openSearch()
@@ -612,12 +649,23 @@ func (m *Model) pushUndo(t *model.Todo, idx int) {
 func (m Model) View() string {
 	title := " Global to-dos "
 	if m.projectMode {
-		title = " Project to-dos "
+		if m.projectDirName != "" {
+			title = " " + m.projectDirName + " to-dos "
+		} else {
+			title = " Project to-dos "
+		}
 	}
 
 	var sb strings.Builder
 	sb.WriteString(titleStyle.Render(title))
 	sb.WriteString("\n\n")
+
+	// Show project error prominently if set.
+	if m.projectErr != "" {
+		errStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("196"))
+		sb.WriteString(errStyle.Render("Project error: " + m.projectErr))
+		sb.WriteString("\n\n")
+	}
 
 	// Filter header (2 lines when active).
 	if header := m.renderFilterHeader(); header != "" {
@@ -782,6 +830,7 @@ func renderHelpWindow() string {
 				{"u", "Undo last deletion"},
 				{"j / ↓", "Move cursor down"},
 				{"k / ↑", "Move cursor up"},
+				{"f", "Reload todos from disk"},
 				{"?", "Toggle this help window"},
 				{"q / ctrl+c", "Quit"},
 			},
