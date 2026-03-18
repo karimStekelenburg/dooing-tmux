@@ -7,10 +7,6 @@ import (
 	"github.com/karimStekelenburg/dooing-tmux/internal/model"
 )
 
-func fakeKeyPad(k string) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
-}
-
 func fakeSpecialKey(t tea.KeyType) tea.KeyMsg {
 	return tea.KeyMsg{Type: t}
 }
@@ -77,8 +73,8 @@ func TestNotesIconAbsentWhenNoNotes(t *testing.T) {
 
 	line := renderTodo(todo, nil)
 	// Notes icon should NOT be present.
-	for _, r := range []rune(line) {
-		for _, nr := range []rune(notesIcon) {
+	for _, r := range line {
+		for _, nr := range notesIcon {
 			if r == nr {
 				t.Error("expected notes icon to be absent when notes are empty")
 				return
