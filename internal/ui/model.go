@@ -146,6 +146,9 @@ type Model struct {
 	nested            nestedState
 	nestedParentID    string // set when inputMode == inputModeCreateNested
 	nestedParentDepth int    // depth of the parent todo
+
+	// Calendar popup state.
+	cal calendarState
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -209,6 +212,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Priority selector intercepts input when open.
 	if m.prioritySel.open {
 		return m.updatePrioritySelector(msg)
+	}
+
+	// Calendar intercepts input when open.
+	if m.cal.open {
+		return m.updateCalendar(msg)
 	}
 
 	// Confirmation dialog blocks all other input.
@@ -383,6 +391,16 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Priority selector
 	case "p":
 		m.openPrioritySelector()
+
+	// Calendar (due date)
+	case "H":
+		m.openCalendar()
+
+	// Remove due date
+	case "r":
+		if len(visible) > 0 {
+			m.removeDueDate()
+		}
 
 	// Clear filter
 	case "c":
@@ -643,6 +661,12 @@ func (m Model) View() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, priView, "  ", mainView)
 	}
 
+	// Calendar overlay — rendered left of main.
+	if m.cal.open {
+		calView := m.renderCalendar()
+		return lipgloss.JoinHorizontal(lipgloss.Top, calView, "  ", mainView)
+	}
+
 	// Help window overlay — rendered side-by-side (right of main).
 	if m.showHelp {
 		help := renderHelpWindow()
@@ -677,6 +701,8 @@ func renderHelpWindow() string {
 				{"n", "Create child todo (nested)"},
 				{"z / tab", "Fold/unfold children"},
 				{"e", "Edit selected todo"},
+				{"H", "Set due date (calendar popup)"},
+				{"r", "Remove due date"},
 				{"x", "Toggle todo status (pending → in progress → done)"},
 				{"d", "Delete selected todo"},
 				{"D", "Delete all completed todos"},
@@ -791,6 +817,11 @@ func renderTodo(t *model.Todo, groups map[string]config.PriorityGroup) string {
 
 	displayText := highlightTags(t.Text, textStyle)
 	line := fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
+
+	// Append due date if present.
+	if t.DueAt != nil {
+		line += " " + formatDueDate(t.DueAt, t.Done)
+	}
 
 	// Append priority label if present.
 	if len(t.Priorities) > 0 {
