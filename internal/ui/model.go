@@ -18,9 +18,10 @@ import (
 type inputMode int
 
 const (
-	inputModeNone   inputMode = iota
-	inputModeCreate           // 'i' — new todo
-	inputModeEdit             // 'e' — edit existing todo
+	inputModeNone         inputMode = iota
+	inputModeCreate                 // 'i' — new todo
+	inputModeEdit                   // 'e' — edit existing todo
+	inputModeTimeEstimate           // 'T' — set time estimation
 )
 
 // undoEntry stores a deleted todo for possible restoration.
@@ -140,6 +141,12 @@ type Model struct {
 
 	// Priority selector state.
 	prioritySel prioritySelectorState
+
+	// Search popup state.
+	search searchState
+
+	// Time estimation: ID of todo being estimated.
+	estimatingID string
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -167,6 +174,7 @@ func NewModel(projectMode bool) Model {
 		cfg:         cfg,
 		ti:          ti,
 		tagWin:      newTagWindowState(),
+		search:      newSearchState(),
 	}
 }
 
@@ -202,6 +210,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Priority selector intercepts input when open.
 	if m.prioritySel.open {
 		return m.updatePrioritySelector(msg)
+	}
+
+	// Search popup intercepts input when open.
+	if m.search.open {
+		return m.updateSearch(msg)
 	}
 
 	// Confirmation dialog blocks all other input.
@@ -265,6 +278,25 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.sortTodos()
 			_ = m.st.Save(m.storePath, m.todos)
+		case inputModeTimeEstimate:
+			hours, ok := parseTimeEstimation(text)
+			if !ok {
+				m.statusMsg = "Invalid time format. Use: 30m, 2h, 1d, 0.5w"
+				m.inputMode = inputModeNone
+				m.estimatingID = ""
+				m.ti.SetValue("")
+				m.ti.Blur()
+				return m, nil
+			}
+			for _, t := range m.todos {
+				if t.ID == m.estimatingID {
+					t.EstimatedHours = hours
+					break
+				}
+			}
+			m.sortTodos()
+			_ = m.st.Save(m.storePath, m.todos)
+			m.estimatingID = ""
 		}
 		m.inputMode = inputModeNone
 		m.editingID = ""
@@ -275,6 +307,7 @@ func (m Model) updateInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.inputMode = inputModeNone
 		m.editingID = ""
+		m.estimatingID = ""
 		m.ti.SetValue("")
 		m.ti.Blur()
 		return m, nil
@@ -342,6 +375,37 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Priority selector
 	case "p":
 		m.openPrioritySelector()
+
+	// Time estimation
+	case "T":
+		if len(visible) > 0 {
+			t := visible[m.cursor]
+			m.estimatingID = t.ID
+			m.inputMode = inputModeTimeEstimate
+			m.ti.SetValue("")
+			m.ti.Placeholder = "e.g. 30m, 2h, 1d, 0.5w"
+			m.ti.Focus()
+			return m, textinput.Blink
+		}
+
+	// Remove time estimation
+	case "R":
+		if len(visible) > 0 {
+			t := visible[m.cursor]
+			for _, todo := range m.todos {
+				if todo.ID == t.ID {
+					todo.EstimatedHours = 0
+					break
+				}
+			}
+			m.sortTodos()
+			_ = m.st.Save(m.storePath, m.todos)
+			m.statusMsg = "Time estimation removed"
+		}
+
+	// Search
+	case "/":
+		return m, m.openSearch()
 
 	// Clear filter
 	case "c":
@@ -536,8 +600,11 @@ func (m Model) View() string {
 	if m.inputMode != inputModeNone {
 		sb.WriteString("\n")
 		prompt := "New todo:"
-		if m.inputMode == inputModeEdit {
+		switch m.inputMode {
+		case inputModeEdit:
 			prompt = "Edit todo:"
+		case inputModeTimeEstimate:
+			prompt = "Time estimate (e.g. 30m, 2h, 1d, 0.5w):"
 		}
 		inputBlock := inputBorderStyle.Render(
 			lipgloss.NewStyle().Bold(true).Render(prompt) + "\n" + m.ti.View(),
@@ -585,6 +652,12 @@ func (m Model) View() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, priView, "  ", mainView)
 	}
 
+	// Search overlay — rendered left of main.
+	if m.search.open {
+		searchView := m.renderSearch()
+		return lipgloss.JoinHorizontal(lipgloss.Top, searchView, "  ", mainView)
+	}
+
 	// Help window overlay — rendered side-by-side (right of main).
 	if m.showHelp {
 		help := renderHelpWindow()
@@ -617,6 +690,9 @@ func renderHelpWindow() string {
 			bindings: []binding{
 				{"i", "Create new todo"},
 				{"e", "Edit selected todo"},
+				{"T", "Set time estimation (30m, 2h, 1d, 0.5w)"},
+				{"R", "Remove time estimation"},
+				{"/", "Open search"},
 				{"x", "Toggle todo status (pending → in progress → done)"},
 				{"d", "Delete selected todo"},
 				{"D", "Delete all completed todos"},
@@ -731,6 +807,11 @@ func renderTodo(t *model.Todo, groups map[string]config.PriorityGroup) string {
 
 	displayText := highlightTags(t.Text, textStyle)
 	line := fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
+
+	// Append time estimation if present.
+	if t.EstimatedHours > 0 {
+		line += " " + lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Render(formatTimeEstimation(t.EstimatedHours))
+	}
 
 	// Append priority label if present.
 	if len(t.Priorities) > 0 {
