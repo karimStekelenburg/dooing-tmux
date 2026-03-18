@@ -140,6 +140,9 @@ type Model struct {
 
 	// Priority selector state.
 	prioritySel prioritySelectorState
+
+	// Scratchpad notes editor state.
+	pad scratchpadState
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -167,6 +170,7 @@ func NewModel(projectMode bool) Model {
 		cfg:         cfg,
 		ti:          ti,
 		tagWin:      newTagWindowState(),
+		pad:         newScratchpadState(),
 	}
 }
 
@@ -202,6 +206,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Priority selector intercepts input when open.
 	if m.prioritySel.open {
 		return m.updatePrioritySelector(msg)
+	}
+
+	// Scratchpad intercepts input when open.
+	if m.pad.open {
+		return m.updateScratchpad(msg)
 	}
 
 	// Confirmation dialog blocks all other input.
@@ -342,6 +351,12 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Priority selector
 	case "p":
 		m.openPrioritySelector()
+
+	// Scratchpad / notes
+	case "s":
+		if len(visible) > 0 {
+			return m, m.openScratchpad()
+		}
 
 	// Clear filter
 	case "c":
@@ -585,6 +600,12 @@ func (m Model) View() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, priView, "  ", mainView)
 	}
 
+	// Scratchpad overlay — centered (rendered above main).
+	if m.pad.open {
+		padView := m.renderScratchpad()
+		return lipgloss.JoinVertical(lipgloss.Left, padView, mainView)
+	}
+
 	// Help window overlay — rendered side-by-side (right of main).
 	if m.showHelp {
 		help := renderHelpWindow()
@@ -617,6 +638,7 @@ func renderHelpWindow() string {
 			bindings: []binding{
 				{"i", "Create new todo"},
 				{"e", "Edit selected todo"},
+				{"s", "Open notes scratchpad (esc to save & close)"},
 				{"x", "Toggle todo status (pending → in progress → done)"},
 				{"d", "Delete selected todo"},
 				{"D", "Delete all completed todos"},
@@ -731,6 +753,11 @@ func renderTodo(t *model.Todo, groups map[string]config.PriorityGroup) string {
 
 	displayText := highlightTags(t.Text, textStyle)
 	line := fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
+
+	// Append notes icon if todo has notes.
+	if t.Notes != "" {
+		line += " " + notesIconStyle.Render(notesIcon)
+	}
 
 	// Append priority label if present.
 	if len(t.Priorities) > 0 {
