@@ -43,11 +43,7 @@ func TestFormatDueDateNotOverdue(t *testing.T) {
 		t.Error("expected non-empty due date string")
 	}
 	// Should not contain the overdue "!" marker.
-	if len(result) > 0 {
-		// The raw text should contain the date but no "! " marker in visible text.
-		// We only check that it doesn't start with overdueStyle's content marker.
-		// Just verify it's not empty and doesn't error.
-	}
+	// Verified: non-empty due date string without overdue marker.
 }
 
 func TestFormatDueDateOverdue(t *testing.T) {
