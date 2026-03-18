@@ -113,6 +113,38 @@ func TestIsOverdue(t *testing.T) {
 	}
 }
 
+func TestIsDueToday(t *testing.T) {
+	now := time.Now()
+	todayNoon := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location()).Unix()
+	yesterday := time.Date(now.Year(), now.Month(), now.Day()-1, 12, 0, 0, 0, now.Location()).Unix()
+	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 12, 0, 0, 0, now.Location()).Unix()
+
+	dueToday := &Todo{DueAt: &todayNoon}
+	if !dueToday.IsDueToday() {
+		t.Error("expected IsDueToday=true for today's noon timestamp")
+	}
+
+	notYet := &Todo{DueAt: &tomorrow}
+	if notYet.IsDueToday() {
+		t.Error("expected IsDueToday=false for tomorrow")
+	}
+
+	overdue := &Todo{DueAt: &yesterday}
+	if overdue.IsDueToday() {
+		t.Error("expected IsDueToday=false for yesterday (overdue)")
+	}
+
+	done := &Todo{Done: true, DueAt: &todayNoon}
+	if done.IsDueToday() {
+		t.Error("done todos should not be due today")
+	}
+
+	noDate := &Todo{}
+	if noDate.IsDueToday() {
+		t.Error("todos without due date should not be due today")
+	}
+}
+
 func TestGetAllTags(t *testing.T) {
 	todos := []*Todo{
 		{Text: "task #alpha"},

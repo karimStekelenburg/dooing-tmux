@@ -165,6 +165,9 @@ type Model struct {
 	// Project mode state.
 	projectDirName string // basename of git root for title; empty = global
 	projectErr     string // set when project mode failed (not in git repo, etc.)
+
+	// Due notifications overlay.
+	notif notifState
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -200,6 +203,12 @@ func NewModel(projectMode bool) Model {
 	ti.CharLimit = 500
 	ti.Width = 50
 
+	// Build notification state if enabled.
+	var notif notifState
+	if cfg.DueNotifications.Enabled && cfg.DueNotifications.OnStartup {
+		notif = newNotifState(todos)
+	}
+
 	return Model{
 		projectMode:    projectMode,
 		projectDirName: projectDirName,
@@ -211,6 +220,7 @@ func NewModel(projectMode bool) Model {
 		ti:             ti,
 		tagWin:         newTagWindowState(),
 		nested:         newNestedState(),
+		notif:          notif,
 	}
 }
 
@@ -226,6 +236,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = ws.Width
 		m.height = ws.Height
 		return m, nil
+	}
+
+	// Handle jump-to-todo message from notification overlay.
+	if jmp, ok := msg.(jumpToTodoMsg); ok {
+		visible := m.visibleTodos()
+		for i, t := range visible {
+			if t.ID == jmp.todoID {
+				m.cursor = i
+				break
+			}
+		}
+		return m, nil
+	}
+
+	// Notification overlay intercepts input when open.
+	if m.notif.open {
+		return m.updateNotifications(msg)
 	}
 
 	// Help window intercepts input when open.
@@ -821,6 +848,12 @@ func (m Model) View() string {
 	if m.scratchpad.open {
 		padView := m.renderScratchpad()
 		return lipgloss.JoinHorizontal(lipgloss.Top, padView, "  ", mainView)
+	}
+
+	// Due notifications overlay — rendered above main view (stacked).
+	if m.notif.open {
+		notifView := m.renderNotifications()
+		return lipgloss.JoinVertical(lipgloss.Left, notifView, "\n", mainView)
 	}
 
 	// Help window overlay — rendered side-by-side (right of main).

@@ -97,6 +97,16 @@ func (t *Todo) IsOverdue() bool {
 	return *t.DueAt < startOfToday()
 }
 
+// IsDueToday returns true if the todo is due today (not overdue, not done).
+func (t *Todo) IsDueToday() bool {
+	if t.Done || t.DueAt == nil {
+		return false
+	}
+	today := startOfToday()
+	tomorrow := today + 86400
+	return *t.DueAt >= today && *t.DueAt < tomorrow
+}
+
 func startOfToday() int64 {
 	now := time.Now()
 	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
