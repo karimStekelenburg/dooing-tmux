@@ -133,6 +133,10 @@ type Model struct {
 
 	// Help window state.
 	showHelp bool
+
+	// Tag window state.
+	tagWin      tagWindowState
+	activeFilter string // currently active tag filter (empty = no filter)
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -159,6 +163,7 @@ func NewModel(projectMode bool) Model {
 		st:          st,
 		cfg:         cfg,
 		ti:          ti,
+		tagWin:      newTagWindowState(),
 	}
 }
 
@@ -184,6 +189,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	}
+
+	// Tag window intercepts input when open.
+	if m.tagWin.open {
+		return m.updateTagWindow(msg)
 	}
 
 	// Confirmation dialog blocks all other input.
@@ -276,13 +286,16 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Clear status message on any keypress.
 	m.statusMsg = ""
 
+	// Build visible (filtered) slice once.
+	visible := m.filteredTodos()
+
 	switch key.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 
 	// Navigation
 	case "j", "down":
-		if m.cursor < len(m.todos)-1 {
+		if m.cursor < len(visible)-1 {
 			m.cursor++
 		}
 	case "k", "up":
@@ -300,10 +313,10 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Edit
 	case "e":
-		if len(m.todos) == 0 {
+		if len(visible) == 0 {
 			break
 		}
-		t := m.todos[m.cursor]
+		t := visible[m.cursor]
 		m.inputMode = inputModeEdit
 		m.editingID = t.ID
 		m.ti.SetValue(t.Text)
@@ -311,32 +324,45 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ti.Focus()
 		return m, textinput.Blink
 
+	// Tags window
+	case "t":
+		m.tagWin.open = true
+		m.tagWin.cursor = 0
+		m.tagWin.mode = tagWindowBrowse
+		m.tagWin.refreshTags(m.todos)
+
+	// Clear filter
+	case "c":
+		m.activeFilter = ""
+		m.cursor = 0
+
 	// Help
 	case "?":
 		m.showHelp = true
 
 	// Toggle
 	case "x":
-		if len(m.todos) == 0 {
+		if len(visible) == 0 {
 			break
 		}
-		m.todos[m.cursor].Toggle()
+		visible[m.cursor].Toggle()
 		m.sortTodos()
 		_ = m.st.Save(m.storePath, m.todos)
 
 	// Delete
 	case "d":
-		if len(m.todos) == 0 {
+		if len(visible) == 0 {
 			break
 		}
-		t := m.todos[m.cursor]
+		t := visible[m.cursor]
+		todosIdx := m.findTodosIndex(t.ID)
 		if t.GetState() == model.StateDone {
 			// Done todo: delete immediately.
-			m = m.deleteTodoAt(m.cursor)
+			m = m.deleteTodoAt(todosIdx)
 		} else {
 			// Incomplete: ask for confirmation.
 			m.showConfirm = true
-			m.confirmTodoIdx = m.cursor
+			m.confirmTodoIdx = todosIdx
 		}
 
 	// Delete all completed
@@ -354,9 +380,10 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.todos = remaining
 		m.sortTodos()
-		if m.cursor >= len(m.todos) && len(m.todos) > 0 {
-			m.cursor = len(m.todos) - 1
-		} else if len(m.todos) == 0 {
+		vis := m.filteredTodos()
+		if m.cursor >= len(vis) && len(vis) > 0 {
+			m.cursor = len(vis) - 1
+		} else if len(vis) == 0 {
 			m.cursor = 0
 		}
 		_ = m.st.Save(m.storePath, m.todos)
@@ -388,7 +415,7 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// deleteTodoAt removes the todo at idx, saves to disk, and adjusts cursor.
+// deleteTodoAt removes the todo at idx (index into m.todos), saves to disk, and adjusts cursor.
 // It also pushes an undo entry.
 func (m Model) deleteTodoAt(idx int) Model {
 	if idx < 0 || idx >= len(m.todos) {
@@ -397,13 +424,24 @@ func (m Model) deleteTodoAt(idx int) Model {
 	t := m.todos[idx]
 	m.pushUndo(t, idx)
 	m.todos = append(m.todos[:idx], m.todos[idx+1:]...)
-	if m.cursor >= len(m.todos) && len(m.todos) > 0 {
-		m.cursor = len(m.todos) - 1
-	} else if len(m.todos) == 0 {
+	vis := m.filteredTodos()
+	if m.cursor >= len(vis) && len(vis) > 0 {
+		m.cursor = len(vis) - 1
+	} else if len(vis) == 0 {
 		m.cursor = 0
 	}
 	_ = m.st.Save(m.storePath, m.todos)
 	return m
+}
+
+// findTodosIndex returns the index of the todo with the given ID in m.todos, or -1.
+func (m Model) findTodosIndex(id string) int {
+	for i, t := range m.todos {
+		if t.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // sortTodos sorts todos in-place and updates cursor to follow the previously selected todo.
@@ -456,12 +494,22 @@ func (m Model) View() string {
 	sb.WriteString(titleStyle.Render(title))
 	sb.WriteString("\n\n")
 
-	if len(m.todos) == 0 && m.inputMode == inputModeNone {
-		sb.WriteString(lipgloss.NewStyle().Faint(true).Render("No todos yet. Press i to create one."))
+	// Filter header (2 lines when active).
+	if header := m.renderFilterHeader(); header != "" {
+		sb.WriteString(header)
+	}
+
+	visible := m.filteredTodos()
+	if len(visible) == 0 && m.inputMode == inputModeNone {
+		if m.activeFilter != "" {
+			sb.WriteString(lipgloss.NewStyle().Faint(true).Render("No todos matching #" + m.activeFilter + "."))
+		} else {
+			sb.WriteString(lipgloss.NewStyle().Faint(true).Render("No todos yet. Press i to create one."))
+		}
 		sb.WriteString("\n")
 	}
 
-	for i, t := range m.todos {
+	for i, t := range visible {
 		line := renderTodo(t)
 		if i == m.cursor && m.inputMode == inputModeNone && !m.showConfirm {
 			line = cursorStyle.Render("> ") + line
@@ -513,6 +561,12 @@ func (m Model) View() string {
 
 	mainView := borderStyle.Render(sb.String())
 
+	// Tag window overlay — rendered left of main.
+	if m.tagWin.open {
+		tagView := m.renderTagWindow()
+		return lipgloss.JoinHorizontal(lipgloss.Top, tagView, "  ", mainView)
+	}
+
 	// Help window overlay — rendered side-by-side (right of main).
 	if m.showHelp {
 		help := renderHelpWindow()
@@ -556,15 +610,24 @@ func renderHelpWindow() string {
 			},
 		},
 		{
-			title: "Tags window",
+			title: "Tags window (open with t)",
 			bindings: []binding{
-				{"(coming soon)", "Tag filtering — see issue #7"},
+				{"t", "Open tag window"},
+				{"enter", "Filter by selected tag"},
+				{"e", "Rename selected tag"},
+				{"d", "Delete selected tag from all todos"},
+				{"c", "Clear active filter (main window)"},
+				{"q / esc", "Close tag window"},
 			},
 		},
 		{
-			title: "Calendar",
+			title: "Priority selector (open with p)",
 			bindings: []binding{
-				{"(coming soon)", "Due date picker — see issue #8"},
+				{"p", "Open priority selector"},
+				{"space", "Toggle priority checkbox"},
+				{"j / k", "Navigate priorities"},
+				{"enter", "Confirm selection"},
+				{"q / esc", "Cancel"},
 			},
 		},
 	}
@@ -599,10 +662,12 @@ func renderQuickKeys() string {
 		{"d", "delete"},
 		{"D", "del done"},
 		{"u", "undo"},
+		{"t", "tags"},
+		{"p", "priority"},
+		{"c", "clr filter"},
 		{"j/k", "navigate"},
 		{"q", "quit"},
 		{"?", "help"},
-		{"ctrl+c", "force quit"},
 	}
 
 	half := (len(keys) + 1) / 2
