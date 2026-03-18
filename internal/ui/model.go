@@ -149,6 +149,12 @@ type Model struct {
 
 	// Calendar popup state.
 	cal calendarState
+
+	// Time estimation input state.
+	timeInput timeInputState
+
+	// Search overlay state.
+	search searchState
 }
 
 // NewModel creates a new root model, loading todos from disk.
@@ -217,6 +223,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Calendar intercepts input when open.
 	if m.cal.open {
 		return m.updateCalendar(msg)
+	}
+
+	// Time estimation input intercepts when open.
+	if m.timeInput.open {
+		return m.updateTimeInput(msg)
+	}
+
+	// Search overlay intercepts when open.
+	if m.search.open {
+		return m.updateSearch(msg)
 	}
 
 	// Confirmation dialog blocks all other input.
@@ -395,6 +411,29 @@ func (m Model) updateNormal(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Calendar (due date)
 	case "H":
 		m.openCalendar()
+
+	// Time estimate
+	case "T":
+		m.openTimeInput()
+
+	// Remove time estimate
+	case "R":
+		if len(visible) > 0 {
+			t := visible[m.cursor]
+			for _, todo := range m.todos {
+				if todo.ID == t.ID {
+					todo.EstimatedHours = 0
+					break
+				}
+			}
+			m.sortTodos()
+			_ = m.st.Save(m.storePath, m.todos)
+			m.statusMsg = "Time estimate removed"
+		}
+
+	// Search
+	case "/":
+		m.openSearch()
 
 	// Remove due date
 	case "r":
@@ -667,6 +706,18 @@ func (m Model) View() string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, calView, "  ", mainView)
 	}
 
+	// Time estimation input — rendered left of main.
+	if m.timeInput.open {
+		tiView := m.renderTimeInput()
+		return lipgloss.JoinHorizontal(lipgloss.Top, tiView, "  ", mainView)
+	}
+
+	// Search overlay — rendered left of main.
+	if m.search.open {
+		searchView := m.renderSearch()
+		return lipgloss.JoinHorizontal(lipgloss.Top, searchView, "  ", mainView)
+	}
+
 	// Help window overlay — rendered side-by-side (right of main).
 	if m.showHelp {
 		help := renderHelpWindow()
@@ -703,6 +754,9 @@ func renderHelpWindow() string {
 				{"e", "Edit selected todo"},
 				{"H", "Set due date (calendar popup)"},
 				{"r", "Remove due date"},
+				{"T", "Set time estimate (30m, 2h, 1d, 0.5w)"},
+				{"R", "Remove time estimate"},
+				{"/", "Open search"},
 				{"x", "Toggle todo status (pending → in progress → done)"},
 				{"d", "Delete selected todo"},
 				{"D", "Delete all completed todos"},
@@ -817,6 +871,11 @@ func renderTodo(t *model.Todo, groups map[string]config.PriorityGroup) string {
 
 	displayText := highlightTags(t.Text, textStyle)
 	line := fmt.Sprintf("%s %s", lipgloss.NewStyle().Bold(true).Render(icon), displayText)
+
+	// Append time estimate if present.
+	if est := renderTimeEstimate(t.EstimatedHours); est != "" {
+		line += " " + est
+	}
 
 	// Append due date if present.
 	if t.DueAt != nil {
