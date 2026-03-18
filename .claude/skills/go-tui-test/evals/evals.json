@@ -1,0 +1,23 @@
+{
+  "skill_name": "go-tui-test",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just changed the help overlay layout in internal/ui/components.go — can you check if the rendering still looks right?",
+      "expected_output": "Runs snapshot tests focusing on the help overlay, shows pass/fail result, and if the golden file differs, displays the diff and asks whether to update the snapshot.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I'm starting the project fresh — there are no snapshot tests yet. Set up visual snapshot testing for the main todo list view.",
+      "expected_output": "Creates testdata/todos.json fixture with deterministic data, writes a teatest-based snapshot test for the main view, runs it to generate the initial golden file, and shows the rendered output for confirmation.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "snapshot test",
+      "expected_output": "Recognizes this as a request to run the full snapshot test suite, executes all existing snapshot tests, and reports results with diffs for any failures.",
+      "files": []
+    }
+  ]
+}

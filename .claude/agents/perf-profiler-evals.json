@@ -1,0 +1,23 @@
+{
+  "skill_name": "perf-profiler",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Run the perf profiler to establish a baseline. There's no existing baseline yet.",
+      "expected_output": "Agent generates fixture data, writes benchmark tests adapted to the actual codebase, runs them with -count=5, saves results as baseline.txt, and prints a summary table with all benchmarks passing or noting which thresholds are exceeded.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I just refactored the sort function. Run the perf profiler to check for regressions against the baseline.",
+      "expected_output": "Agent runs benchmarks, compares against existing baseline.txt using benchstat, identifies any regressions >20%, and reports them clearly. If sort regressed, it suggests specific optimizations like pre-computing priority scores.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "The render feels sluggish with lots of todos. Profile it and tell me what to fix.",
+      "expected_output": "Agent generates 1000-todo fixture, runs BenchmarkRender, and if it exceeds 16ms, runs pprof CPU/memory profiles, identifies the hot allocation paths, and suggests concrete fixes like strings.Builder or caching rendered lines.",
+      "files": []
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "skill_name": "orchestrator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Start the orchestrator loop. All issues #1-#16 are open with no PRs. What should happen first?",
+      "expected_output": "The orchestrator should fetch all issues, determine #1 has no dependencies and is the only ready issue, and spawn issue-implementer for #1. It should NOT attempt to start #2 or any other issue.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Issues #1-#3 are closed. Issues #4 and #5 are open. Run the orchestrator loop.",
+      "expected_output": "The orchestrator should identify that #4 and #5 are both unblocked (both depend on #3 which is closed) and can run in parallel. It should spawn two issue-implementer agents simultaneously, one for #4 and one for #5.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Issues #1-#3 are closed. Issue #3 just had its PR merged. The orchestrator has not yet notified the human about the Phase 1 review gate.",
+      "expected_output": "The orchestrator should detect the review gate after #3, STOP, and present a summary: Phase 1 complete, what was built (scaffolding, data model, core UI), and the PR URLs. It should NOT proceed to spawn work for #4 or #5 until the human acknowledges.",
+      "files": []
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "skill_name": "go-build-verify",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just finished adding the undo stack to state.go — can you verify everything still compiles and the tests pass?",
+      "expected_output": "Runs go build, golangci-lint, and go test in sequence, reporting results",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "does it compile",
+      "expected_output": "Runs the build verification pipeline starting with go build ./...",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "ok that should be the sorting logic done, run the tests please",
+      "expected_output": "Runs full build/lint/test pipeline, not just tests alone, since go-build-verify short-circuits on failure",
+      "files": []
+    }
+  ]
+}

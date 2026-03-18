@@ -1,0 +1,20 @@
+{
+  "skill_name": "issue-implementer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Implement issue #7 — the tag system. It depends on #6 being done.",
+      "expected_output": "Agent reads issue #7, checks that #6 is closed, creates branch feat/7-tag-system, implements tag extraction/filtering/renaming/deletion one checklist item at a time with atomic commits, generates tests, verifies acceptance criteria, and creates a PR that closes #7."
+    },
+    {
+      "id": 2,
+      "prompt": "Implement issue #4 (Create/Edit todos). Note that issue #3 is still open.",
+      "expected_output": "Agent reads issue #4, discovers dependency #3 is still open, reports that it cannot proceed because #3 is not yet closed, and stops without creating a branch or writing any code."
+    },
+    {
+      "id": 3,
+      "prompt": "Implement issue #10 — the calendar picker and due dates.",
+      "expected_output": "Agent reads issue #10, checks dependencies are closed, creates branch feat/10-calendar-due-dates, implements the calendar widget with month navigation, date selection, due date storage, and overdue display. Commits atomically per checklist item, runs build/lint/test after each, generates tests covering date parsing and calendar rendering, verifies acceptance criteria, and creates a PR."
+    }
+  ]
+}

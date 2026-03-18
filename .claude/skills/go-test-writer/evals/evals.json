@@ -1,0 +1,23 @@
+{
+  "skill_name": "go-test-writer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I just finished implementing the priority scoring function in internal/model/priority.go. Can you write tests for it? It calculates a score based on priority weights and estimated hours.",
+      "expected_output": "A priority_test.go file with table-driven tests covering: normal scoring, zero priorities, nil estimated_hours, the hour_score_value multiplier, done todos returning 0, and edge cases like negative hours or empty priority list.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Write tests for the todo toggle and persistence layer. I want to make sure the state machine cycle works and that JSON round-trips preserve all fields correctly, especially with old data that's missing the new fields.",
+      "expected_output": "Two test files: one with state machine tests verifying the full pending->in_progress->done->pending cycle including completed_at timestamps, and one with JSON round-trip tests plus migration tests for old format data missing id/parent_id/depth fields.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "ok test the main list view component, I want to make sure it renders todos correctly with different states and that keyboard navigation works",
+      "expected_output": "A test file using teatest to create the main model with fixture todos, verify initial render output against a golden file, simulate key presses (j/k navigation, x toggle, d delete), and verify the model state updates correctly after each interaction.",
+      "files": []
+    }
+  ]
+}

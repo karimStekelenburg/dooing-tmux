@@ -1,0 +1,23 @@
+{
+  "skill_name": "dependency-checker",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "PR #12 just merged — it added the priority scoring system with hour_score_value multiplier. Run the dependency checker to see if it broke anything with the existing sort and rendering.",
+      "expected_output": "Agent reads PR #12 diff, identifies priority system as the changed area, maps it to sort (scoring affects order), rendering (priority colors), time estimation (multiplier interaction), and persistence (priorities array). Runs combination tests for sort-with-priorities, priority-color rendering, time-estimate-priority interaction, and JSON round-trip of the priorities array. Reports results per combination.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "We just merged the nested tasks feature (PR #8). I'm worried it might have broken the sort algorithm and the undo system. Can you check cross-feature integration?",
+      "expected_output": "Agent reads PR #8 diff, identifies nested tasks as the changed area. Tests sort stability with nested todos (tree structure preserved under multi-key sort), undo of nested todo deletion (parent-child relationship restored), orphan promotion on parent deletion, rendering with indentation, and persistence round-trip of parent_id/depth fields. Flags any sort-order violations or broken parent references.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "PR #15 changed the JSON persistence format to add the new 'notes' field. Run dependency-checker to make sure nothing regressed.",
+      "expected_output": "Agent reads PR #15 diff, identifies persistence as the changed area. Since persistence connects to every feature, tests a broad set: full-field round-trip (all fields including notes with newlines), migration of old todos missing the notes field, sort correctness after reload, filter-then-reload consistency, nested task parent_id validity after reload. Runs full test suite for regressions. Reports any fields that didn't survive the round-trip.",
+      "files": []
+    }
+  ]
+}

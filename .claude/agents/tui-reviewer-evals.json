@@ -1,0 +1,23 @@
+{
+  "skill_name": "tui-reviewer",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review PR #3 which adds the calendar date picker component. The diff introduces a new calendar.go file with Bubble Tea model, h/j/k/l navigation, month switching with H/L, and a hardcoded lipgloss.Color(\"#00FFFF\") for today highlighting instead of using the project's style constants. It also binds 'H' in the main window Update without checking if the calendar overlay is active.",
+      "expected_output": "Should flag: (1) ERROR for keybinding conflict — 'H' is used in both main window (add due date) and calendar (previous month), needs context guard checking active view state. (2) WARNING for hardcoded color value instead of reusing the shared style constant for cyan/today highlighting. Verdict should be FAIL due to the keybinding error.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Review PR #7 which implements the todo list rendering with sorting. The diff shows sort.Slice being called inside the View() method on every render frame, a new nerd font icon (\\uf059) used for priority indicators not documented in BREAKDOWN.md, and lipgloss.NewStyle().Foreground(lipgloss.Color(\"gray\")) created fresh inside a for loop iterating over all todos in View().",
+      "expected_output": "Should flag: (1) WARNING for sort.Slice in View() — sorting should happen in Update() when data changes, not every frame. (2) INFO for undocumented nerd font icon that may not render in basic terminals. (3) WARNING for allocating new lipgloss.Style objects inside the render loop — should be cached as package-level or struct-level variables. Verdict should be PASS (no errors) but with warnings.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Review PR #12 which adds the scratchpad/notes overlay. The diff shows the scratchpad model's Update function using a pointer receiver that modifies fields but returns the old model value (not the modified one). The scratchpad is sized at 60% width and 60% height but the positioning code doesn't handle WindowSizeMsg — it uses hardcoded width=48 and height=12. The 's' key is handled in the main Update without conflicting with any existing binding.",
+      "expected_output": "Should flag: (1) ERROR for incorrect state threading — pointer receiver modifying state but returning stale model copy means updates are lost. (2) ERROR for missing WindowSizeMsg handling — the 60% sizing is hardcoded to specific pixel values instead of being responsive, will break in non-standard terminal sizes. (3) WARNING for potential overflow in small terminals (48w might exceed an 80-column terminal when combined with the main window). Verdict should be FAIL due to the model correctness and responsive layout errors.",
+      "files": []
+    }
+  ]
+}

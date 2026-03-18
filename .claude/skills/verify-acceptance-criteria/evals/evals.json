@@ -1,0 +1,23 @@
+{
+  "skill_name": "verify-acceptance-criteria",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "are we done with issue #3? I think I finished the persistence layer but want to make sure all the acceptance criteria are met before I move on",
+      "expected_output": "Fetches issue #3, extracts acceptance criteria, runs build and tests, checks for relevant code (JSON serialization, file paths, migration logic), and produces a per-criterion pass/fail table with a clear verdict",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "check acceptance criteria for the tag system issue — I'm on the feat/5-tag-system branch",
+      "expected_output": "Infers issue #5 from branch name, fetches the issue, verifies tag extraction regex exists, tag rename/delete functions exist, filter logic works, tests pass, and flags any subjective UI criteria for human review",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I just finished implementing the calendar picker. Can you verify that issue 9 requirements are all satisfied?",
+      "expected_output": "Fetches issue #9, checks for calendar widget code (month grid rendering, navigation keys, date selection, language support, today highlighting), runs relevant tests, and reports which criteria pass, which fail, and which need human visual inspection",
+      "files": []
+    }
+  ]
+}
