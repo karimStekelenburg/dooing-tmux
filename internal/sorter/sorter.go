@@ -11,6 +11,7 @@ package sorter
 import (
 	"sort"
 
+	"github.com/karimStekelenburg/dooing-tmux/internal/config"
 	"github.com/karimStekelenburg/dooing-tmux/internal/model"
 )
 
@@ -19,14 +20,20 @@ import (
 //
 // cfg parameters:
 //   - doneSortByCompleted: when true, among done todos sort by most-recently completed first.
-func Sort(todos []*model.Todo, doneSortByCompleted bool) {
+// Sort sorts todos in-place using the multi-key comparator.
+// cfg is used for priority scoring; pass nil to use zero scores.
+func Sort(todos []*model.Todo, doneSortByCompleted bool, cfg ...config.Config) {
+	var c config.Config
+	if len(cfg) > 0 {
+		c = cfg[0]
+	}
 	sort.SliceStable(todos, func(i, j int) bool {
-		return less(todos[i], todos[j], doneSortByCompleted)
+		return less(todos[i], todos[j], doneSortByCompleted, c)
 	})
 }
 
 // less is the multi-key comparator used by Sort.
-func less(a, b *model.Todo, doneSortByCompleted bool) bool {
+func less(a, b *model.Todo, doneSortByCompleted bool, cfg config.Config) bool {
 	aDone := a.Done
 	bDone := b.Done
 
@@ -44,9 +51,9 @@ func less(a, b *model.Todo, doneSortByCompleted bool) bool {
 		}
 	}
 
-	// 3. Priority score: higher first (stub returns 0 for now).
-	aScore := priorityScore(a)
-	bScore := priorityScore(b)
+	// 3. Priority score: higher first.
+	aScore := GetPriorityScore(a, cfg)
+	bScore := GetPriorityScore(b, cfg)
 	if aScore != bScore {
 		return aScore > bScore
 	}
@@ -67,10 +74,40 @@ func less(a, b *model.Todo, doneSortByCompleted bool) bool {
 	return a.CreatedAt < b.CreatedAt
 }
 
-// priorityScore returns a numeric score for a todo's priorities.
-// This is a stub that returns 0; full scoring will be implemented in issue #8.
-func priorityScore(_ *model.Todo) int {
-	return 0
+// GetPriorityScore computes a priority score for a todo.
+// Done todos always score 0.
+// base = sum of weights for each priority the todo has.
+// multiplier = 1.0 if no estimated hours, else 1.0 / (hours * hourScoreValue).
+// score = base * multiplier.
+func GetPriorityScore(t *model.Todo, cfg config.Config) float64 {
+	if t.Done {
+		return 0
+	}
+	if len(t.Priorities) == 0 {
+		return 0
+	}
+
+	// Build weight lookup.
+	weightMap := make(map[string]int, len(cfg.Priorities))
+	for _, p := range cfg.Priorities {
+		weightMap[p.Name] = p.Weight
+	}
+
+	var base float64
+	for _, name := range t.Priorities {
+		base += float64(weightMap[name])
+	}
+
+	multiplier := 1.0
+	if t.EstimatedHours > 0 {
+		hsv := cfg.HourScoreValue
+		if hsv <= 0 {
+			hsv = 0.125
+		}
+		multiplier = 1.0 / (t.EstimatedHours * hsv)
+	}
+
+	return base * multiplier
 }
 
 // completedTime returns CompletedAt as an int64 (0 if nil).

@@ -149,7 +149,7 @@ func NewModel(projectMode bool) Model {
 	cfg, _ := config.Load(config.DefaultConfigPath())
 
 	// Sort on load so initial display is correct.
-	sorter.Sort(todos, cfg.DoneSortByCompleted)
+	sorter.Sort(todos, cfg.DoneSortByCompleted, cfg)
 
 	ti := textinput.New()
 	ti.Placeholder = "Type your todo… (#tag to categorise)"
@@ -455,7 +455,7 @@ func (m *Model) sortTodos() {
 		selectedID = m.todos[m.cursor].ID
 	}
 
-	sorter.Sort(m.todos, m.cfg.DoneSortByCompleted)
+	sorter.Sort(m.todos, m.cfg.DoneSortByCompleted, m.cfg)
 
 	// Re-locate the cursor.
 	if selectedID != "" {
